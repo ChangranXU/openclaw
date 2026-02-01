@@ -78,6 +78,18 @@ export const OpenClawSchema = z
           })
           .strict()
           .optional(),
+        langfuse: z
+          .object({
+            enabled: z.boolean().optional(),
+            publicKey: z.string().optional(),
+            secretKey: z.string().optional(),
+            baseUrl: z.string().url().optional(),
+            flushAt: z.number().int().positive().optional(),
+            flushIntervalMs: z.number().int().nonnegative().optional(),
+            debug: z.boolean().optional(),
+          })
+          .strict()
+          .optional(),
         cacheTrace: z
           .object({
             enabled: z.boolean().optional(),

@@ -118,6 +118,13 @@ const FIELD_LABELS: Record<string, string> = {
   "diagnostics.otel.logs": "OpenTelemetry Logs Enabled",
   "diagnostics.otel.sampleRate": "OpenTelemetry Trace Sample Rate",
   "diagnostics.otel.flushIntervalMs": "OpenTelemetry Flush Interval (ms)",
+  "diagnostics.langfuse.enabled": "Langfuse Enabled",
+  "diagnostics.langfuse.publicKey": "Langfuse Public Key",
+  "diagnostics.langfuse.secretKey": "Langfuse Secret Key",
+  "diagnostics.langfuse.baseUrl": "Langfuse Base URL",
+  "diagnostics.langfuse.flushAt": "Langfuse Flush At (batch size)",
+  "diagnostics.langfuse.flushIntervalMs": "Langfuse Flush Interval (ms)",
+  "diagnostics.langfuse.debug": "Langfuse Debug Mode",
   "diagnostics.cacheTrace.enabled": "Cache Trace Enabled",
   "diagnostics.cacheTrace.filePath": "Cache Trace File Path",
   "diagnostics.cacheTrace.includeMessages": "Cache Trace Include Messages",
@@ -406,6 +413,17 @@ const FIELD_HELP: Record<string, string> = {
     "Optional allowlist of browser profile names exposed via the node proxy.",
   "diagnostics.flags":
     'Enable targeted diagnostics logs by flag (e.g. ["telegram.http"]). Supports wildcards like "telegram.*" or "*".',
+  "diagnostics.langfuse.enabled":
+    "Enable Langfuse observability integration for LLM tracing (default: false).",
+  "diagnostics.langfuse.publicKey": "Langfuse public key (fallback: LANGFUSE_PUBLIC_KEY env var).",
+  "diagnostics.langfuse.secretKey": "Langfuse secret key (fallback: LANGFUSE_SECRET_KEY env var).",
+  "diagnostics.langfuse.baseUrl":
+    "Langfuse API base URL (fallback: LANGFUSE_BASE_URL env var, default: https://cloud.langfuse.com).",
+  "diagnostics.langfuse.flushAt":
+    "Number of events to batch before flushing to Langfuse (default: 15).",
+  "diagnostics.langfuse.flushIntervalMs":
+    "Interval in milliseconds between flushes to Langfuse (default: 10000).",
+  "diagnostics.langfuse.debug": "Enable debug logging for Langfuse SDK (default: false).",
   "diagnostics.cacheTrace.enabled":
     "Log cache trace snapshots for embedded agent runs (default: false).",
   "diagnostics.cacheTrace.filePath":

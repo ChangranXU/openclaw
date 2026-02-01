@@ -133,11 +133,28 @@ export type DiagnosticsCacheTraceConfig = {
   includeSystem?: boolean;
 };
 
+export type DiagnosticsLangfuseConfig = {
+  enabled?: boolean;
+  /** Langfuse public key (or via LANGFUSE_PUBLIC_KEY env var). */
+  publicKey?: string;
+  /** Langfuse secret key (or via LANGFUSE_SECRET_KEY env var). */
+  secretKey?: string;
+  /** Langfuse base URL (or via LANGFUSE_BASE_URL env var). */
+  baseUrl?: string;
+  /** Batch size before flush (default: 15). */
+  flushAt?: number;
+  /** Flush interval in milliseconds (default: 10000). */
+  flushIntervalMs?: number;
+  /** Enable debug logging for Langfuse SDK. */
+  debug?: boolean;
+};
+
 export type DiagnosticsConfig = {
   enabled?: boolean;
   /** Optional ad-hoc diagnostics flags (e.g. "telegram.http"). */
   flags?: string[];
   otel?: DiagnosticsOtelConfig;
+  langfuse?: DiagnosticsLangfuseConfig;
   cacheTrace?: DiagnosticsCacheTraceConfig;
 };
 

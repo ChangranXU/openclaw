@@ -28,6 +28,10 @@ export type DiagnosticUsageEvent = DiagnosticBaseEvent & {
   };
   costUsd?: number;
   durationMs?: number;
+  /** The user's input message text (for Langfuse tracing). */
+  inputText?: string;
+  /** The model's output response text (for Langfuse tracing). */
+  outputText?: string;
 };
 
 export type DiagnosticWebhookReceivedEvent = DiagnosticBaseEvent & {
@@ -146,20 +150,50 @@ export type DiagnosticEventInput = DiagnosticEventPayload extends infer Event
     ? Omit<Event, "seq" | "ts">
     : never
   : never;
-let seq = 0;
-const listeners = new Set<(evt: DiagnosticEventPayload) => void>();
+
+// Use globalThis to ensure the same listeners set is shared across module instances
+// This is necessary because plugins loaded via jiti may create separate module instances
+const GLOBAL_KEY = "__openclaw_diagnostic_listeners__";
+const GLOBAL_SEQ_KEY = "__openclaw_diagnostic_seq__";
+
+type GlobalDiagnosticState = {
+  listeners: Set<(evt: DiagnosticEventPayload) => void>;
+  seq: number;
+};
+
+function getGlobalState(): GlobalDiagnosticState {
+  const g = globalThis as unknown as Record<string, unknown>;
+  if (!g[GLOBAL_KEY]) {
+    g[GLOBAL_KEY] = new Set<(evt: DiagnosticEventPayload) => void>();
+  }
+  if (typeof g[GLOBAL_SEQ_KEY] !== "number") {
+    g[GLOBAL_SEQ_KEY] = 0;
+  }
+  return {
+    listeners: g[GLOBAL_KEY] as Set<(evt: DiagnosticEventPayload) => void>,
+    get seq() {
+      return g[GLOBAL_SEQ_KEY] as number;
+    },
+    set seq(val: number) {
+      g[GLOBAL_SEQ_KEY] = val;
+    },
+  };
+}
+
+const state = getGlobalState();
 
 export function isDiagnosticsEnabled(config?: OpenClawConfig): boolean {
   return config?.diagnostics?.enabled === true;
 }
 
 export function emitDiagnosticEvent(event: DiagnosticEventInput) {
+  state.seq += 1;
   const enriched = {
     ...event,
-    seq: (seq += 1),
+    seq: state.seq,
     ts: Date.now(),
   } satisfies DiagnosticEventPayload;
-  for (const listener of listeners) {
+  for (const listener of state.listeners) {
     try {
       listener(enriched);
     } catch {
@@ -169,11 +203,11 @@ export function emitDiagnosticEvent(event: DiagnosticEventInput) {
 }
 
 export function onDiagnosticEvent(listener: (evt: DiagnosticEventPayload) => void): () => void {
-  listeners.add(listener);
-  return () => listeners.delete(listener);
+  state.listeners.add(listener);
+  return () => state.listeners.delete(listener);
 }
 
 export function resetDiagnosticEventsForTest(): void {
-  seq = 0;
-  listeners.clear();
+  state.seq = 0;
+  state.listeners.clear();
 }

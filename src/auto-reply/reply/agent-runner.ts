@@ -439,6 +439,11 @@ export async function runReplyAgent(params: {
         config: cfg,
       });
       const costUsd = estimateUsageCost({ usage, cost: costConfig });
+      // Extract output text from reply payloads for Langfuse tracing
+      const outputText = replyPayloads
+        .map((p) => p.text)
+        .filter(Boolean)
+        .join("\n");
       emitDiagnosticEvent({
         type: "model.usage",
         sessionKey,
@@ -460,6 +465,8 @@ export async function runReplyAgent(params: {
         },
         costUsd,
         durationMs: Date.now() - runStartedAt,
+        inputText: commandBody,
+        outputText: outputText || undefined,
       });
     }
 
