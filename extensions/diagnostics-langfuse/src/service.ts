@@ -177,6 +177,10 @@ function handleDiagnosticEvent(
         handleToolEnd(evt, traceManager);
         break;
 
+      case "llm.error":
+        handleLLMError(evt, traceManager);
+        break;
+
       case "diagnostic.heartbeat":
         // Periodic flush on heartbeat
         traceManager.flush().catch(() => {
@@ -450,5 +454,37 @@ function handleToolEnd(
     output: evt.output,
     error: evt.error,
     durationMs: evt.durationMs,
+  });
+}
+
+/**
+ * Handle LLM error events.
+ * Creates an error event in the trace for visibility in Langfuse.
+ */
+function handleLLMError(
+  evt: Extract<DiagnosticEventPayload, { type: "llm.error" }>,
+  traceManager: TraceManager,
+): void {
+  // Use sessionKey as the primary trace identifier
+  const traceId = evt.sessionKey ?? evt.runId ?? `llm_error_${Date.now()}`;
+
+  // Ensure trace exists
+  const state = traceManager.getOrCreateTrace(traceId, evt.sessionKey, evt.channel);
+
+  // Create an error event in the trace
+  state.trace.event({
+    name: "llm_error",
+    level: "ERROR",
+    statusMessage: evt.errorMessage,
+    metadata: {
+      provider: evt.provider,
+      model: evt.model,
+      errorType: evt.errorType,
+      statusCode: evt.statusCode,
+      fallbackAttempted: evt.fallbackAttempted,
+      sessionKey: evt.sessionKey,
+      sessionId: evt.sessionId,
+      runId: evt.runId,
+    },
   });
 }

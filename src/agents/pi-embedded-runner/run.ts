@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import type { ThinkLevel } from "../../auto-reply/thinking.js";
 import type { RunEmbeddedPiAgentParams } from "./run/params.js";
 import type { EmbeddedPiAgentMeta, EmbeddedPiRunResult } from "./types.js";
+import { emitDiagnosticEvent } from "../../infra/diagnostic-events.js";
 import { enqueueCommandInLane } from "../../process/command-queue.js";
 import { resolveUserPath } from "../../utils.js";
 import { isMarkdownCapableMessageChannel } from "../../utils/message-channel.js";
@@ -540,6 +541,29 @@ export async function runEmbeddedPiAgent(
           const assistantFailoverReason = classifyFailoverReason(lastAssistant?.errorMessage ?? "");
           const cloudCodeAssistFormatError = attempt.cloudCodeAssistFormatError;
           const imageDimensionError = parseImageDimensionError(lastAssistant?.errorMessage ?? "");
+
+          // Emit LLM error diagnostic event for all errors (not just failover errors)
+          if (lastAssistant?.stopReason === "error" || lastAssistant?.errorMessage) {
+            emitDiagnosticEvent({
+              type: "llm.error",
+              sessionKey: params.sessionKey,
+              sessionId: params.sessionId,
+              runId: params.runId,
+              provider: lastAssistant?.provider ?? provider,
+              model: lastAssistant?.model ?? model.id,
+              errorType:
+                assistantFailoverReason ??
+                (authFailure
+                  ? "auth"
+                  : rateLimitFailure
+                    ? "rate_limit"
+                    : timedOut
+                      ? "timeout"
+                      : "unknown"),
+              errorMessage: lastAssistant?.errorMessage?.slice(0, 2000) ?? "Unknown error",
+              fallbackAttempted: fallbackConfigured,
+            });
+          }
 
           if (imageDimensionError && lastProfileId) {
             const details = [

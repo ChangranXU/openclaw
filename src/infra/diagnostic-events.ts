@@ -161,6 +161,24 @@ export type DiagnosticToolEndEvent = DiagnosticBaseEvent & {
   output?: unknown;
 };
 
+export type DiagnosticLLMErrorEvent = DiagnosticBaseEvent & {
+  type: "llm.error";
+  sessionKey?: string;
+  sessionId?: string;
+  runId?: string;
+  channel?: string;
+  provider?: string;
+  model?: string;
+  /** HTTP status code (e.g., 400, 429, 500). */
+  statusCode?: number;
+  /** Error type classification (e.g., "content_filter", "rate_limit", "auth", "timeout"). */
+  errorType?: string;
+  /** The error message from the LLM provider. */
+  errorMessage?: string;
+  /** Whether model fallback was attempted. */
+  fallbackAttempted?: boolean;
+};
+
 export type DiagnosticEventPayload =
   | DiagnosticUsageEvent
   | DiagnosticWebhookReceivedEvent
@@ -175,7 +193,8 @@ export type DiagnosticEventPayload =
   | DiagnosticRunAttemptEvent
   | DiagnosticHeartbeatEvent
   | DiagnosticToolStartEvent
-  | DiagnosticToolEndEvent;
+  | DiagnosticToolEndEvent
+  | DiagnosticLLMErrorEvent;
 
 export type DiagnosticEventInput = DiagnosticEventPayload extends infer Event
   ? Event extends DiagnosticEventPayload
