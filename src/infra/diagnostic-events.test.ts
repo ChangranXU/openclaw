@@ -1,6 +1,8 @@
 import { describe, expect, test } from "vitest";
 import {
   emitDiagnosticEvent,
+  configureDiagnosticInternalLogCapture,
+  maybeEmitInternalLogDiagnosticEvent,
   onDiagnosticEvent,
   resetDiagnosticEventsForTest,
 } from "./diagnostic-events.js";
@@ -50,5 +52,39 @@ describe("diagnostic-events", () => {
     stop();
 
     expect(types).toEqual(["webhook.received", "message.queued", "session.state"]);
+  });
+
+  test("can emit internal.log events when enabled", async () => {
+    resetDiagnosticEventsForTest();
+    configureDiagnosticInternalLogCapture({ enabled: true, minLevel: "info", includeMeta: true });
+
+    const events: Array<{ type: string; subsystem?: string; level?: string; message?: string }> =
+      [];
+    const stop = onDiagnosticEvent((evt) => {
+      if (evt.type === "internal.log") {
+        events.push({
+          type: evt.type,
+          subsystem: (evt as any).subsystem,
+          level: (evt as any).level,
+          message: (evt as any).message,
+        });
+      }
+    });
+
+    maybeEmitInternalLogDiagnosticEvent({
+      subsystem: "test/subsystem",
+      level: "info",
+      message: "hello",
+      meta: { sessionKey: "s1", runId: "r1" },
+    });
+
+    stop();
+    expect(events.length).toBe(1);
+    expect(events[0]).toMatchObject({
+      type: "internal.log",
+      subsystem: "test/subsystem",
+      level: "info",
+      message: "hello",
+    });
   });
 });

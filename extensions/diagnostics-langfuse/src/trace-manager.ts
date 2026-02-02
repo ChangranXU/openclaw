@@ -24,6 +24,17 @@ export class TraceManager {
     this.langfuse = langfuse;
   }
 
+  private truncateText(value: unknown, maxChars: number): string | undefined {
+    if (typeof value !== "string") {
+      return undefined;
+    }
+    const text = value;
+    if (text.length <= maxChars) {
+      return text;
+    }
+    return `${text.slice(0, Math.max(0, maxChars - 3))}...`;
+  }
+
   /**
    * Get or create a trace for a session.
    */
@@ -151,12 +162,34 @@ export class TraceManager {
 
   /**
    * End the most recent tool span.
+   * If no matching span is found, creates a fallback event to ensure error data is captured.
    */
   endToolSpan(sessionId: string, params: SpanEndParams): void {
     const state = this.traces.get(sessionId);
     const stack = this.toolSpanStack.get(sessionId);
 
+    // If no matching trace/span exists, create a fallback event to capture the error data
+    // This ensures tool errors are never silently lost
     if (!state || !stack || stack.length === 0) {
+      // Try to get or create a trace for this session to log the error
+      const fallbackState = this.getOrCreateTrace(sessionId);
+      if (fallbackState && (params.error || params.output)) {
+        const toolName = params.toolName ?? "unknown_tool";
+        fallbackState.trace.event({
+          name: `tool_error:${toolName}`,
+          level: params.error ? "ERROR" : "WARNING",
+          statusMessage: params.error,
+          metadata: {
+            toolName,
+            input: params.input,
+            output: params.output,
+            error: params.error,
+            durationMs: params.durationMs,
+            fallback: true,
+            reason: "no_matching_span",
+          },
+        });
+      }
       return;
     }
 
@@ -164,16 +197,41 @@ export class TraceManager {
     const span = state.activeSpans.get(spanId);
 
     if (span) {
+      // Include input in metadata when there's an error for better debugging
+      const metadata: Record<string, unknown> = {
+        error: params.error,
+        durationMs: params.durationMs,
+      };
+      // Add input to error spans for full context visibility
+      if (params.error && params.input !== undefined) {
+        metadata.input = params.input;
+      }
+
       span.end({
         output: params.output,
         statusMessage: params.error,
         level: params.error ? "ERROR" : "DEFAULT",
-        metadata: {
-          error: params.error,
-          durationMs: params.durationMs,
-        },
+        metadata,
       });
       state.activeSpans.delete(spanId);
+    } else {
+      // Span ID was in stack but not found in activeSpans - create fallback event
+      const toolName = params.toolName ?? "unknown_tool";
+      state.trace.event({
+        name: `tool_error:${toolName}`,
+        level: params.error ? "ERROR" : "WARNING",
+        statusMessage: params.error,
+        metadata: {
+          toolName,
+          input: params.input,
+          output: params.output,
+          error: params.error,
+          durationMs: params.durationMs,
+          fallback: true,
+          reason: "span_not_in_active_spans",
+          spanId,
+        },
+      });
     }
   }
 
@@ -219,6 +277,13 @@ export class TraceManager {
     channel?: string;
     provider?: string;
     model?: string;
+    /**
+     * Diagnostic event sequence (monotonic within the process).
+     * Used to make generation names stable + unique to avoid accidental dedupe/overwrites.
+     */
+    eventSeq?: number;
+    /** Diagnostic event timestamp (ms since epoch). */
+    eventTs?: number;
     usage: {
       input?: number;
       output?: number;
@@ -240,8 +305,12 @@ export class TraceManager {
   }): void {
     const state = this.getOrCreateTrace(params.sessionId, params.sessionKey, params.channel);
 
+    // Important: keep each generation uniquely identifiable.
+    // Some Langfuse SDK/backends may de-dupe or merge objects when names/ids collide.
+    const generationName = typeof params.eventSeq === "number" ? `model_call:${params.eventSeq}` : "model_call";
+
     const generation = state.trace.generation({
-      name: "model_call",
+      name: generationName,
       model: params.model,
       input: params.inputText,
       metadata: {
@@ -249,6 +318,8 @@ export class TraceManager {
         channel: params.channel,
         contextLimit: params.context?.limit,
         contextUsed: params.context?.used,
+        diagnosticSeq: params.eventSeq,
+        diagnosticTs: params.eventTs,
       },
     });
 

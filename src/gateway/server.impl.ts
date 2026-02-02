@@ -18,7 +18,10 @@ import {
 } from "../config/config.js";
 import { applyPluginAutoEnable } from "../config/plugin-auto-enable.js";
 import { clearAgentRunContext, onAgentEvent } from "../infra/agent-events.js";
-import { isDiagnosticsEnabled } from "../infra/diagnostic-events.js";
+import {
+  configureDiagnosticInternalLogCapture,
+  isDiagnosticsEnabled,
+} from "../infra/diagnostic-events.js";
 import { logAcceptedEnvOption } from "../infra/env.js";
 import { createExecApprovalForwarder } from "../infra/exec-approval-forwarder.js";
 import { onHeartbeatEvent } from "../infra/heartbeat-events.js";
@@ -214,6 +217,24 @@ export async function startGatewayServer(
   if (diagnosticsEnabled) {
     startDiagnosticHeartbeat();
   }
+
+  // Optional: capture internal (non-tool-call) behavior into diagnostic events so Langfuse can observe it.
+  // Gated under diagnostics.langfuse.* to avoid high-volume telemetry unless explicitly enabled.
+  const langfuseCfg = cfgAtStart?.diagnostics?.langfuse;
+  if (diagnosticsEnabled && langfuseCfg?.enabled && langfuseCfg?.captureInternalLogs === true) {
+    configureDiagnosticInternalLogCapture({
+      enabled: true,
+      minLevel: langfuseCfg.captureInternalLogsMinLevel ?? "warn",
+      includeMeta: langfuseCfg.captureInternalLogsIncludeMeta !== false,
+      maxMessageChars: 4000,
+      maxMetaChars: 8000,
+      denySubsystemPrefixes: ["diagnostic", "diagnostics-langfuse"],
+    });
+  } else {
+    // Ensure disabled by default.
+    configureDiagnosticInternalLogCapture({ enabled: false });
+  }
+
   setGatewaySigusr1RestartPolicy({ allowExternal: cfgAtStart.commands?.restart === true });
   initSubagentRegistry();
   const defaultAgentId = resolveDefaultAgentId(cfgAtStart);

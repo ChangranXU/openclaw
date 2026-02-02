@@ -233,6 +233,8 @@ export {
 export type {
   DiagnosticEventPayload,
   DiagnosticHeartbeatEvent,
+  DiagnosticInternalLogEvent,
+  DiagnosticInternalLogLevel,
   DiagnosticLaneDequeueEvent,
   DiagnosticLaneEnqueueEvent,
   DiagnosticMessageProcessedEvent,

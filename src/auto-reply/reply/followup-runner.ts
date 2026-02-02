@@ -9,10 +9,13 @@ import { lookupContextTokens } from "../../agents/context.js";
 import { DEFAULT_CONTEXT_TOKENS } from "../../agents/defaults.js";
 import { runWithModelFallback } from "../../agents/model-fallback.js";
 import { runEmbeddedPiAgent } from "../../agents/pi-embedded.js";
+import { hasNonzeroUsage } from "../../agents/usage.js";
 import { resolveAgentIdFromSessionKey, type SessionEntry } from "../../config/sessions.js";
 import { logVerbose } from "../../globals.js";
 import { registerAgentRunContext } from "../../infra/agent-events.js";
+import { emitDiagnosticEvent, isDiagnosticsEnabled } from "../../infra/diagnostic-events.js";
 import { defaultRuntime } from "../../runtime.js";
+import { estimateUsageCost, resolveModelCostConfig } from "../../utils/usage-format.js";
 import { stripHeartbeatToken } from "../heartbeat.js";
 import { isSilentReplyText, SILENT_REPLY_TOKEN } from "../tokens.js";
 import {
@@ -193,15 +196,17 @@ export function createFollowupRunner(params: {
         return;
       }
 
-      if (storePath && sessionKey) {
-        const usage = runResult.meta.agentMeta?.usage;
-        const modelUsed = runResult.meta.agentMeta?.model ?? fallbackModel ?? defaultModel;
-        const contextTokensUsed =
-          agentCfgContextTokens ??
-          lookupContextTokens(modelUsed) ??
-          sessionEntry?.contextTokens ??
-          DEFAULT_CONTEXT_TOKENS;
+      // Extract usage info for both session persistence and diagnostics
+      const usage = runResult.meta.agentMeta?.usage;
+      const modelUsed = runResult.meta.agentMeta?.model ?? fallbackModel ?? defaultModel;
+      const contextTokensUsed =
+        agentCfgContextTokens ??
+        lookupContextTokens(modelUsed) ??
+        sessionEntry?.contextTokens ??
+        DEFAULT_CONTEXT_TOKENS;
 
+      // Persist session usage if we have the required context
+      if (storePath && sessionKey) {
         await persistSessionUsageUpdate({
           storePath,
           sessionKey,
@@ -210,6 +215,51 @@ export function createFollowupRunner(params: {
           providerUsed: fallbackProvider,
           contextTokensUsed,
           logLabel: "followup",
+        });
+      }
+
+      // Emit model.usage diagnostic event for followup runs (queued messages)
+      // This ensures Langfuse captures input/output for all messages, not just the first one
+      if (isDiagnosticsEnabled(queued.run.config) && hasNonzeroUsage(usage)) {
+        const input = usage?.input ?? 0;
+        const output = usage?.output ?? 0;
+        const cacheRead = usage?.cacheRead ?? 0;
+        const cacheWrite = usage?.cacheWrite ?? 0;
+        const promptTokens = input + cacheRead + cacheWrite;
+        const totalTokens = usage?.total ?? promptTokens + output;
+        const costConfig = resolveModelCostConfig({
+          provider: fallbackProvider,
+          model: modelUsed,
+          config: queued.run.config,
+        });
+        const costUsd = estimateUsageCost({ usage: usage ?? {}, cost: costConfig });
+        // Extract output text from reply payloads for Langfuse tracing
+        const outputText = (runResult.payloads ?? [])
+          .map((p) => p.text)
+          .filter(Boolean)
+          .join("\n");
+        emitDiagnosticEvent({
+          type: "model.usage",
+          sessionKey,
+          sessionId: queued.run.sessionId,
+          channel: queued.originatingChannel ?? queued.run.messageProvider?.toLowerCase(),
+          provider: fallbackProvider,
+          model: modelUsed,
+          usage: {
+            input,
+            output,
+            cacheRead,
+            cacheWrite,
+            promptTokens,
+            total: totalTokens,
+          },
+          context: {
+            limit: contextTokensUsed,
+            used: totalTokens,
+          },
+          costUsd,
+          inputText: queued.prompt,
+          outputText: outputText || undefined,
         });
       }
 

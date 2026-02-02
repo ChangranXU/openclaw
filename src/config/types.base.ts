@@ -147,6 +147,15 @@ export type DiagnosticsLangfuseConfig = {
   flushIntervalMs?: number;
   /** Enable debug logging for Langfuse SDK. */
   debug?: boolean;
+  /**
+   * Capture internal (non-tool-call) behavior into Langfuse as events.
+   * This makes warnings/errors (and optionally info/debug) visible even when not emitted as model tool calls.
+   */
+  captureInternalLogs?: boolean;
+  /** Minimum internal log level to capture (default: "warn"). */
+  captureInternalLogsMinLevel?: "trace" | "debug" | "info" | "warn" | "error" | "fatal";
+  /** Include structured meta payload on internal log events (default: true). */
+  captureInternalLogsIncludeMeta?: boolean;
 };
 
 export type DiagnosticsConfig = {

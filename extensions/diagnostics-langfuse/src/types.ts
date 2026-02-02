@@ -48,6 +48,10 @@ export type SpanEndParams = {
   output?: unknown;
   error?: string;
   durationMs?: number;
+  /** Tool input for error tracing - ensures input is visible when tool fails. */
+  input?: unknown;
+  /** Tool name for fallback event creation when span is missing. */
+  toolName?: string;
 };
 
 export type TraceContext = {

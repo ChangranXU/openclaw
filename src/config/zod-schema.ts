@@ -87,6 +87,18 @@ export const OpenClawSchema = z
             flushAt: z.number().int().positive().optional(),
             flushIntervalMs: z.number().int().nonnegative().optional(),
             debug: z.boolean().optional(),
+            captureInternalLogs: z.boolean().optional(),
+            captureInternalLogsMinLevel: z
+              .union([
+                z.literal("trace"),
+                z.literal("debug"),
+                z.literal("info"),
+                z.literal("warn"),
+                z.literal("error"),
+                z.literal("fatal"),
+              ])
+              .optional(),
+            captureInternalLogsIncludeMeta: z.boolean().optional(),
           })
           .strict()
           .optional(),

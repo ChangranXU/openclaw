@@ -16,6 +16,8 @@ import { normalizeToolName } from "./tool-policy.js";
 
 // Track tool execution start times for duration calculation
 const toolStartTimes = new Map<string, number>();
+// Track tool inputs for error tracing (ensures input is captured even when tool fails)
+const toolInputsByCallId = new Map<string, unknown>();
 
 /**
  * Truncate large values for diagnostic events to avoid excessive payload sizes.
@@ -78,6 +80,8 @@ export async function handleToolExecutionStart(
 
   // Track start time for duration calculation
   toolStartTimes.set(toolCallId, Date.now());
+  // Track input for error tracing (ensures input is captured even when tool fails)
+  toolInputsByCallId.set(toolCallId, truncateForDiagnostic(args));
 
   // Emit diagnostic event for tool start
   // Use sessionId for trace isolation (changes on /reset or /new)
@@ -211,11 +215,15 @@ export function handleToolExecutionEnd(
   const startTime = toolStartTimes.get(toolCallId);
   const durationMs = startTime ? Date.now() - startTime : undefined;
   toolStartTimes.delete(toolCallId);
+  // Retrieve stored input for error tracing
+  const storedInput = toolInputsByCallId.get(toolCallId);
+  toolInputsByCallId.delete(toolCallId);
 
   const errorMessage = isToolError ? extractToolErrorMessage(sanitizedResult) : undefined;
 
   // Use sessionId for trace isolation (changes on /reset or /new)
   // Use sessionKey for grouping (stays same for user/channel)
+  // Include input in tool.end event to ensure full context is captured for error tracing
   emitDiagnosticEvent({
     type: "tool.end",
     sessionId: ctx.params.sessionId,
@@ -227,6 +235,7 @@ export function handleToolExecutionEnd(
     isError: isToolError,
     error: errorMessage,
     output: truncateForDiagnostic(sanitizedResult),
+    input: storedInput,
   });
 
   if (isToolError) {

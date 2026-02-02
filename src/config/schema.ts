@@ -125,6 +125,9 @@ const FIELD_LABELS: Record<string, string> = {
   "diagnostics.langfuse.flushAt": "Langfuse Flush At (batch size)",
   "diagnostics.langfuse.flushIntervalMs": "Langfuse Flush Interval (ms)",
   "diagnostics.langfuse.debug": "Langfuse Debug Mode",
+  "diagnostics.langfuse.captureInternalLogs": "Langfuse Capture Internal Logs",
+  "diagnostics.langfuse.captureInternalLogsMinLevel": "Langfuse Internal Log Min Level",
+  "diagnostics.langfuse.captureInternalLogsIncludeMeta": "Langfuse Internal Log Include Meta",
   "diagnostics.cacheTrace.enabled": "Cache Trace Enabled",
   "diagnostics.cacheTrace.filePath": "Cache Trace File Path",
   "diagnostics.cacheTrace.includeMessages": "Cache Trace Include Messages",
@@ -424,6 +427,12 @@ const FIELD_HELP: Record<string, string> = {
   "diagnostics.langfuse.flushIntervalMs":
     "Interval in milliseconds between flushes to Langfuse (default: 10000).",
   "diagnostics.langfuse.debug": "Enable debug logging for Langfuse SDK (default: false).",
+  "diagnostics.langfuse.captureInternalLogs":
+    "Capture internal (non-tool-call) behavior into Langfuse as events (default: false).",
+  "diagnostics.langfuse.captureInternalLogsMinLevel":
+    'Minimum internal log level to capture ("trace"|"debug"|"info"|"warn"|"error"|"fatal"; default: "warn").',
+  "diagnostics.langfuse.captureInternalLogsIncludeMeta":
+    "Include structured log meta in Langfuse events (default: true; may include sensitive data if not redacted).",
   "diagnostics.cacheTrace.enabled":
     "Log cache trace snapshots for embedded agent runs (default: false).",
   "diagnostics.cacheTrace.filePath":

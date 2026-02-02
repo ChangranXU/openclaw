@@ -177,6 +177,10 @@ function handleDiagnosticEvent(
         handleToolEnd(evt, traceManager);
         break;
 
+      case "internal.log":
+        handleInternalLog(evt, traceManager);
+        break;
+
       case "llm.error":
         handleLLMError(evt, traceManager);
         break;
@@ -220,6 +224,8 @@ function handleModelUsage(
     channel: evt.channel,
     provider: evt.provider,
     model: evt.model,
+    eventSeq: evt.seq,
+    eventTs: evt.ts,
     usage: evt.usage,
     costUsd: evt.costUsd,
     durationMs: evt.durationMs,
@@ -466,6 +472,7 @@ function handleToolStart(
 /**
  * Handle tool end events.
  * Ends the tool span with result and error information.
+ * Includes input for error tracing to ensure full context is captured.
  */
 function handleToolEnd(
   evt: Extract<DiagnosticEventPayload, { type: "tool.end" }>,
@@ -474,11 +481,59 @@ function handleToolEnd(
   // Use sessionId as the trace identifier (must match tool.start)
   const traceId = evt.sessionId ?? evt.sessionKey ?? evt.runId ?? `tool_${Date.now()}`;
 
-  // End the tool span
+  // End the tool span - include input for error tracing
   traceManager.endToolSpan(traceId, {
     output: evt.output,
     error: evt.error,
     durationMs: evt.durationMs,
+    input: evt.input,
+    toolName: evt.toolName,
+  });
+}
+
+function normalizeSubsystemId(subsystem: string): string {
+  const trimmed = subsystem.trim();
+  if (!trimmed) {
+    return "unknown";
+  }
+  // Keep it stable + Langfuse-friendly.
+  return trimmed
+    .toLowerCase()
+    .replace(/[^a-z0-9/_-]+/g, "_")
+    .replace(/_+/g, "_")
+    .slice(0, 80);
+}
+
+/**
+ * Handle internal (non-tool-call) logs/actions.
+ * These are recorded as Langfuse events so warnings/errors are visible even without tool spans.
+ */
+function handleInternalLog(
+  evt: Extract<DiagnosticEventPayload, { type: "internal.log" }>,
+  traceManager: TraceManager,
+): void {
+  // Prefer session-bound tracing when available; otherwise group by subsystem to avoid trace explosion.
+  const traceId =
+    evt.sessionId ?? evt.sessionKey ?? (evt.subsystem ? `runtime_${normalizeSubsystemId(evt.subsystem)}` : "runtime");
+
+  const state = traceManager.getOrCreateTrace(traceId, evt.sessionKey, evt.channel);
+  const level =
+    evt.level === "fatal" || evt.level === "error" ? "ERROR" : evt.level === "warn" ? "WARNING" : "DEFAULT";
+
+  state.trace.event({
+    name: `log:${normalizeSubsystemId(evt.subsystem)}`,
+    level,
+    statusMessage: evt.message,
+    metadata: {
+      subsystem: evt.subsystem,
+      level: evt.level,
+      message: evt.message,
+      meta: evt.meta,
+      sessionKey: evt.sessionKey,
+      sessionId: evt.sessionId,
+      runId: evt.runId,
+      channel: evt.channel,
+    },
   });
 }
 
