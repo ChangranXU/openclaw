@@ -398,6 +398,50 @@ export async function runReplyAgent(params: {
     // Otherwise, a late typing trigger (e.g. from a tool callback) can outlive the run and
     // keep the typing indicator stuck.
     if (payloadArray.length === 0) {
+      // Emit model.usage even when no payloads (ensures all model calls are traced)
+      if (isDiagnosticsEnabled(cfg)) {
+        const input = usage?.input ?? 0;
+        const output = usage?.output ?? 0;
+        const cacheRead = usage?.cacheRead ?? 0;
+        const cacheWrite = usage?.cacheWrite ?? 0;
+        const promptTokens = input + cacheRead + cacheWrite;
+        const totalTokens = usage?.total ?? promptTokens + output;
+        const costConfig = resolveModelCostConfig({
+          provider: providerUsed,
+          model: modelUsed,
+          config: cfg,
+        });
+        const costUsd = estimateUsageCost({ usage, cost: costConfig });
+
+        // Extract output text for Langfuse tracing (capture NO_REPLY)
+        const outputText = (runResult.assistantTexts || []).filter(Boolean).join("\n");
+
+        emitDiagnosticEvent({
+          type: "model.usage",
+          sessionKey,
+          sessionId: followupRun.run.sessionId,
+          channel: replyToChannel,
+          provider: providerUsed,
+          model: modelUsed,
+          usage: {
+            input,
+            output,
+            cacheRead,
+            cacheWrite,
+            promptTokens,
+            total: totalTokens,
+          },
+          context: {
+            limit: contextTokensUsed,
+            used: totalTokens,
+          },
+          costUsd,
+          durationMs: Date.now() - runStartedAt,
+          inputText: commandBody,
+          outputText: outputText || undefined,
+          hasUserVisibleReply: false,
+        });
+      }
       return finalizeWithFollowup(undefined, queueKey, runFollowupTurn);
     }
 
@@ -420,30 +464,33 @@ export async function runReplyAgent(params: {
     const { replyPayloads } = payloadResult;
     didLogHeartbeatStrip = payloadResult.didLogHeartbeatStrip;
 
-    if (replyPayloads.length === 0) {
-      return finalizeWithFollowup(undefined, queueKey, runFollowupTurn);
-    }
-
-    await signalTypingIfNeeded(replyPayloads, typingSignals);
-
-    if (isDiagnosticsEnabled(cfg) && hasNonzeroUsage(usage)) {
-      const input = usage.input ?? 0;
-      const output = usage.output ?? 0;
-      const cacheRead = usage.cacheRead ?? 0;
-      const cacheWrite = usage.cacheWrite ?? 0;
+    // Emit model.usage diagnostic event with metadata about user-visible reply
+    // This ensures Langfuse captures ALL model calls with accurate reply status
+    if (isDiagnosticsEnabled(cfg)) {
+      const input = usage?.input ?? 0;
+      const output = usage?.output ?? 0;
+      const cacheRead = usage?.cacheRead ?? 0;
+      const cacheWrite = usage?.cacheWrite ?? 0;
       const promptTokens = input + cacheRead + cacheWrite;
-      const totalTokens = usage.total ?? promptTokens + output;
+      const totalTokens = usage?.total ?? promptTokens + output;
       const costConfig = resolveModelCostConfig({
         provider: providerUsed,
         model: modelUsed,
         config: cfg,
       });
       const costUsd = estimateUsageCost({ usage, cost: costConfig });
-      // Extract output text from reply payloads for Langfuse tracing
-      const outputText = replyPayloads
-        .map((p) => p.text)
-        .filter(Boolean)
-        .join("\n");
+      // Extract output text for Langfuse tracing
+      // Prefer raw assistantTexts to capture NO_REPLY or other filtered content
+      let outputText = (runResult.assistantTexts || []).filter(Boolean).join("\n");
+
+      if (!outputText) {
+        outputText = payloadArray
+          .map((p) => p.text)
+          .filter(Boolean)
+          .join("\n");
+      }
+
+      const hasUserVisibleReply = replyPayloads.length > 0;
       emitDiagnosticEvent({
         type: "model.usage",
         sessionKey,
@@ -467,8 +514,15 @@ export async function runReplyAgent(params: {
         durationMs: Date.now() - runStartedAt,
         inputText: commandBody,
         outputText: outputText || undefined,
+        hasUserVisibleReply,
       });
     }
+
+    if (replyPayloads.length === 0) {
+      return finalizeWithFollowup(undefined, queueKey, runFollowupTurn);
+    }
+
+    await signalTypingIfNeeded(replyPayloads, typingSignals);
 
     const responseUsageRaw =
       activeSessionEntry?.responseUsage ??

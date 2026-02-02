@@ -49,6 +49,8 @@ export type EmbeddedPiRunResult = {
   messagingToolSentTexts?: string[];
   // Messaging tool targets that successfully sent a message during the run.
   messagingToolSentTargets?: MessagingToolSend[];
+  /** Raw assistant texts (before payload filtering) for tracing/diagnostics. */
+  assistantTexts?: string[];
 };
 
 export type EmbeddedPiCompactResult = {

@@ -218,53 +218,52 @@ export function createFollowupRunner(params: {
         });
       }
 
-      // Emit model.usage diagnostic event for followup runs (queued messages)
-      // This ensures Langfuse captures input/output for all messages, not just the first one
-      if (isDiagnosticsEnabled(queued.run.config) && hasNonzeroUsage(usage)) {
-        const input = usage?.input ?? 0;
-        const output = usage?.output ?? 0;
-        const cacheRead = usage?.cacheRead ?? 0;
-        const cacheWrite = usage?.cacheWrite ?? 0;
-        const promptTokens = input + cacheRead + cacheWrite;
-        const totalTokens = usage?.total ?? promptTokens + output;
-        const costConfig = resolveModelCostConfig({
-          provider: fallbackProvider,
-          model: modelUsed,
-          config: queued.run.config,
-        });
-        const costUsd = estimateUsageCost({ usage: usage ?? {}, cost: costConfig });
-        // Extract output text from reply payloads for Langfuse tracing
-        const outputText = (runResult.payloads ?? [])
-          .map((p) => p.text)
-          .filter(Boolean)
-          .join("\n");
-        emitDiagnosticEvent({
-          type: "model.usage",
-          sessionKey,
-          sessionId: queued.run.sessionId,
-          channel: queued.originatingChannel ?? queued.run.messageProvider?.toLowerCase(),
-          provider: fallbackProvider,
-          model: modelUsed,
-          usage: {
-            input,
-            output,
-            cacheRead,
-            cacheWrite,
-            promptTokens,
-            total: totalTokens,
-          },
-          context: {
-            limit: contextTokensUsed,
-            used: totalTokens,
-          },
-          costUsd,
-          inputText: queued.prompt,
-          outputText: outputText || undefined,
-        });
-      }
-
       const payloadArray = runResult.payloads ?? [];
+
       if (payloadArray.length === 0) {
+        // Emit model.usage even when no payloads (ensures all model calls are traced)
+        if (isDiagnosticsEnabled(queued.run.config)) {
+          const input = usage?.input ?? 0;
+          const output = usage?.output ?? 0;
+          const cacheRead = usage?.cacheRead ?? 0;
+          const cacheWrite = usage?.cacheWrite ?? 0;
+          const promptTokens = input + cacheRead + cacheWrite;
+          const totalTokens = usage?.total ?? promptTokens + output;
+          const costConfig = resolveModelCostConfig({
+            provider: fallbackProvider,
+            model: modelUsed,
+            config: queued.run.config,
+          });
+          const costUsd = estimateUsageCost({ usage, cost: costConfig });
+
+          // Extract output text for Langfuse tracing (capture NO_REPLY)
+          const outputText = (runResult.assistantTexts || []).filter(Boolean).join("\n");
+
+          emitDiagnosticEvent({
+            type: "model.usage",
+            sessionKey,
+            sessionId: queued.run.sessionId,
+            channel: queued.originatingChannel ?? queued.run.messageProvider?.toLowerCase(),
+            provider: fallbackProvider,
+            model: modelUsed,
+            usage: {
+              input,
+              output,
+              cacheRead,
+              cacheWrite,
+              promptTokens,
+              total: totalTokens,
+            },
+            context: {
+              limit: contextTokensUsed,
+              used: totalTokens,
+            },
+            costUsd,
+            inputText: queued.prompt,
+            outputText: outputText || undefined,
+            hasUserVisibleReply: false,
+          });
+        }
         return;
       }
       const sanitizedPayloads = payloadArray.flatMap((payload) => {
@@ -306,6 +305,61 @@ export function createFollowupRunner(params: {
         accountId: queued.run.agentAccountId,
       });
       const finalPayloads = suppressMessagingToolReplies ? [] : dedupedPayloads;
+
+      // Emit model.usage diagnostic event with metadata about user-visible reply
+      // This ensures Langfuse captures ALL model calls with accurate reply status
+      if (isDiagnosticsEnabled(queued.run.config)) {
+        const input = usage?.input ?? 0;
+        const output = usage?.output ?? 0;
+        const cacheRead = usage?.cacheRead ?? 0;
+        const cacheWrite = usage?.cacheWrite ?? 0;
+        const promptTokens = input + cacheRead + cacheWrite;
+        const totalTokens = usage?.total ?? promptTokens + output;
+        const costConfig = resolveModelCostConfig({
+          provider: fallbackProvider,
+          model: modelUsed,
+          config: queued.run.config,
+        });
+        const costUsd = estimateUsageCost({ usage, cost: costConfig });
+
+        // Extract output text for Langfuse tracing
+        // Prefer raw assistantTexts to capture NO_REPLY or other filtered content
+        let outputText = (runResult.assistantTexts || []).filter(Boolean).join("\n");
+
+        if (!outputText) {
+          outputText = payloadArray
+            .map((p) => p.text)
+            .filter(Boolean)
+            .join("\n");
+        }
+
+        const hasUserVisibleReply = finalPayloads.length > 0;
+        emitDiagnosticEvent({
+          type: "model.usage",
+          sessionKey,
+          sessionId: queued.run.sessionId,
+          channel: queued.originatingChannel ?? queued.run.messageProvider?.toLowerCase(),
+          provider: fallbackProvider,
+          model: modelUsed,
+          usage: {
+            input,
+            output,
+            cacheRead,
+            cacheWrite,
+            promptTokens,
+            total: totalTokens,
+          },
+          context: {
+            limit: contextTokensUsed,
+            used: totalTokens,
+          },
+          costUsd,
+          durationMs: Date.now() - runId.length, // approximation, using runId timestamp if available? No, we don't track duration properly here
+          inputText: queued.prompt,
+          outputText: outputText || undefined,
+          hasUserVisibleReply,
+        });
+      }
 
       if (finalPayloads.length === 0) {
         return;

@@ -32,6 +32,8 @@ export type DiagnosticUsageEvent = DiagnosticBaseEvent & {
   inputText?: string;
   /** The model's output response text (for Langfuse tracing). */
   outputText?: string;
+  /** Whether the model output resulted in a user-visible reply (false for NO_REPLY/silent). */
+  hasUserVisibleReply?: boolean;
 };
 
 export type DiagnosticWebhookReceivedEvent = DiagnosticBaseEvent & {

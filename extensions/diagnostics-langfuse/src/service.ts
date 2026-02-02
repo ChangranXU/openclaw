@@ -232,6 +232,7 @@ function handleModelUsage(
     context: evt.context,
     inputText: evt.inputText,
     outputText: evt.outputText,
+    hasUserVisibleReply: evt.hasUserVisibleReply,
   });
 
   // Notify observability providers

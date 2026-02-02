@@ -302,6 +302,8 @@ export class TraceManager {
     inputText?: string;
     /** The model's output response text. */
     outputText?: string;
+    /** Whether the model output resulted in a user-visible reply (false for NO_REPLY/silent). */
+    hasUserVisibleReply?: boolean;
   }): void {
     const state = this.getOrCreateTrace(params.sessionId, params.sessionKey, params.channel);
 
@@ -320,6 +322,7 @@ export class TraceManager {
         contextUsed: params.context?.used,
         diagnosticSeq: params.eventSeq,
         diagnosticTs: params.eventTs,
+        hasUserVisibleReply: params.hasUserVisibleReply,
       },
     });
 
@@ -335,6 +338,7 @@ export class TraceManager {
         durationMs: params.durationMs,
         cacheRead: params.usage.cacheRead,
         cacheWrite: params.usage.cacheWrite,
+        hasUserVisibleReply: params.hasUserVisibleReply,
       },
     });
   }
