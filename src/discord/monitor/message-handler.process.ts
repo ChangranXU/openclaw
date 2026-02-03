@@ -26,6 +26,7 @@ import { createTypingCallbacks } from "../../channels/typing.js";
 import { resolveMarkdownTableMode } from "../../config/markdown-tables.js";
 import { readSessionUpdatedAt, resolveStorePath } from "../../config/sessions.js";
 import { danger, logVerbose, shouldLogVerbose } from "../../globals.js";
+import { getChildLogger } from "../../logging.js";
 import { buildAgentSessionKey } from "../../routing/resolve-route.js";
 import { resolveThreadSessionKeys } from "../../routing/session-key.js";
 import { truncateUtf16Safe } from "../../utils.js";
@@ -84,6 +85,8 @@ export async function processDiscordMessage(ctx: DiscordMessagePreflightContext)
     route,
     commandAuthorized,
   } = ctx;
+
+  const logger = getChildLogger({ module: "discord-reply" });
 
   const mediaList = await resolveMediaList(message, mediaMaxBytes);
   const text = messageText;
@@ -356,7 +359,10 @@ export async function processDiscordMessage(ctx: DiscordMessagePreflightContext)
       replyReference.markSent();
     },
     onError: (err, info) => {
-      runtime.error?.(danger(`discord ${info.kind} reply failed: ${String(err)}`));
+      logger.error(
+        { sessionKey: route.sessionKey, error: err },
+        danger(`discord ${info.kind} reply failed: ${String(err)}`),
+      );
     },
     onReplyStart: createTypingCallbacks({
       start: () => sendTyping({ client, channelId: typingChannelId }),

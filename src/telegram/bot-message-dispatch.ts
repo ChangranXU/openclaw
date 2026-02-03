@@ -17,6 +17,7 @@ import { createTypingCallbacks } from "../channels/typing.js";
 import { OpenClawConfig } from "../config/config.js";
 import { resolveMarkdownTableMode } from "../config/markdown-tables.js";
 import { danger, logVerbose } from "../globals.js";
+import { getChildLogger } from "../logging.js";
 import { deliverReplies } from "./bot/delivery.js";
 import { resolveTelegramDraftStreamingChunking } from "./draft-chunking.js";
 import { createTelegramDraftStream } from "./draft-stream.js";
@@ -69,6 +70,8 @@ export const dispatchTelegramMessage = async ({
     reactionApi,
     removeAckAfterReply,
   } = context;
+
+  const logger = getChildLogger({ module: "telegram-reply" });
 
   const isPrivateChat = msg.chat.type === "private";
   const draftThreadId = threadSpec.id;
@@ -260,7 +263,10 @@ export const dispatchTelegramMessage = async ({
         }
       },
       onError: (err, info) => {
-        runtime.error?.(danger(`telegram ${info.kind} reply failed: ${String(err)}`));
+        logger.error(
+          { sessionKey: route.sessionKey, error: err },
+          danger(`telegram ${info.kind} reply failed: ${String(err)}`),
+        );
       },
       onReplyStart: createTypingCallbacks({
         start: sendTyping,

@@ -20,6 +20,7 @@ import { resolveConversationLabel } from "../../channels/conversation-label.js";
 import { resolveNativeCommandsEnabled, resolveNativeSkillsEnabled } from "../../config/commands.js";
 import { resolveMarkdownTableMode } from "../../config/markdown-tables.js";
 import { danger, logVerbose } from "../../globals.js";
+import { getChildLogger } from "../../logging.js";
 import { buildPairingReply } from "../../pairing/pairing-messages.js";
 import {
   readChannelAllowFromStore,
@@ -144,6 +145,7 @@ export function registerSlackMonitorSlashCommands(params: {
   const { ctx, account } = params;
   const cfg = ctx.cfg;
   const runtime = ctx.runtime;
+  const logger = getChildLogger({ module: "slack-slash" });
 
   const supportsInteractiveArgMenus =
     typeof (ctx.app as { action?: unknown }).action === "function";
@@ -449,7 +451,10 @@ export function registerSlackMonitorSlashCommands(params: {
             });
           },
           onError: (err, info) => {
-            runtime.error?.(danger(`slack slash ${info.kind} reply failed: ${String(err)}`));
+            logger.error(
+              { sessionKey: route.sessionKey, error: err },
+              danger(`slack slash ${info.kind} reply failed: ${String(err)}`),
+            );
           },
         },
         replyOptions: { skillFilter: channelConfig?.skills },

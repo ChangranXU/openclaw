@@ -288,6 +288,7 @@ export const registerTelegramNativeCommands = ({
   shouldSkipUpdate,
   opts,
 }: RegisterTelegramNativeCommandsParams) => {
+  const logger = getChildLogger({ module: "telegram-native-command" });
   const boundRoute =
     nativeEnabled && nativeSkillsEnabled
       ? resolveAgentRoute({ cfg, channel: "telegram", accountId })
@@ -575,7 +576,10 @@ export const registerTelegramNativeCommands = ({
                 }
               },
               onError: (err, info) => {
-                runtime.error?.(danger(`telegram slash ${info.kind} reply failed: ${String(err)}`));
+                logger.error(
+                  { sessionKey: route.sessionKey, error: err },
+                  danger(`telegram slash ${info.kind} reply failed: ${String(err)}`),
+                );
               },
             },
             replyOptions: {

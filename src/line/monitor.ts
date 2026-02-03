@@ -7,6 +7,7 @@ import { resolveEffectiveMessagesConfig } from "../agents/identity.js";
 import { chunkMarkdownText } from "../auto-reply/chunk.js";
 import { dispatchReplyWithBufferedBlockDispatcher } from "../auto-reply/reply/provider-dispatcher.js";
 import { danger, logVerbose } from "../globals.js";
+import { getChildLogger } from "../logging.js";
 import { normalizePluginHttpPath } from "../plugins/http-path.js";
 import { registerPluginHttpRoute } from "../plugins/http-registry.js";
 import { deliverLineAutoReply } from "./auto-reply-delivery.js";
@@ -163,6 +164,7 @@ export async function monitorLineProvider(
       }
 
       const { ctxPayload, replyToken, route } = ctx;
+      const logger = getChildLogger({ module: "line-reply" });
 
       // Record inbound activity
       recordChannelRuntimeState({
@@ -246,7 +248,10 @@ export async function monitorLineProvider(
               });
             },
             onError: (err, info) => {
-              runtime.error?.(danger(`line ${info.kind} reply failed: ${String(err)}`));
+              logger.error(
+                { sessionKey: route.sessionKey, error: err },
+                danger(`line ${info.kind} reply failed: ${String(err)}`),
+              );
             },
           },
           replyOptions: {},

@@ -9,6 +9,7 @@ import { createReplyPrefixContext } from "../../../channels/reply-prefix.js";
 import { createTypingCallbacks } from "../../../channels/typing.js";
 import { resolveStorePath, updateLastRoute } from "../../../config/sessions.js";
 import { danger, logVerbose, shouldLogVerbose } from "../../../globals.js";
+import { getChildLogger } from "../../../logging.js";
 import { removeSlackReaction } from "../../actions.js";
 import { resolveSlackThreadTargets } from "../../threading.js";
 import { createSlackReplyDeliveryPlan, deliverReplies } from "../replies.js";
@@ -17,6 +18,7 @@ export async function dispatchPreparedSlackMessage(prepared: PreparedSlackMessag
   const { ctx, account, message, route } = prepared;
   const cfg = ctx.cfg;
   const runtime = ctx.runtime;
+  const logger = getChildLogger({ module: "slack-reply" });
 
   if (prepared.isDirectMessage) {
     const sessionCfg = cfg.session;
@@ -115,7 +117,10 @@ export async function dispatchPreparedSlackMessage(prepared: PreparedSlackMessag
       replyPlan.markSent();
     },
     onError: (err, info) => {
-      runtime.error?.(danger(`slack ${info.kind} reply failed: ${String(err)}`));
+      logger.error(
+        { sessionKey: route.sessionKey, error: err },
+        danger(`slack ${info.kind} reply failed: ${String(err)}`),
+      );
       typingCallbacks.onIdle?.();
     },
     onReplyStart: typingCallbacks.onReplyStart,

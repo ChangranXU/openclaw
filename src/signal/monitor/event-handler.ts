@@ -25,6 +25,7 @@ import { createTypingCallbacks } from "../../channels/typing.js";
 import { readSessionUpdatedAt, resolveStorePath } from "../../config/sessions.js";
 import { danger, logVerbose, shouldLogVerbose } from "../../globals.js";
 import { enqueueSystemEvent } from "../../infra/system-events.js";
+import { getChildLogger } from "../../logging.js";
 import { mediaKindFromMime } from "../../media/constants.js";
 import { buildPairingReply } from "../../pairing/pairing-messages.js";
 import {
@@ -45,6 +46,7 @@ import {
 import { sendMessageSignal, sendReadReceiptSignal, sendTypingSignal } from "../send.js";
 
 export function createSignalEventHandler(deps: SignalEventHandlerDeps) {
+  const logger = getChildLogger({ module: "signal-event-handler" });
   const inboundDebounceMs = resolveInboundDebounceMs({ cfg: deps.cfg, channel: "signal" });
 
   type SignalInboundEntry = {
@@ -211,7 +213,10 @@ export function createSignalEventHandler(deps: SignalEventHandlerDeps) {
         });
       },
       onError: (err, info) => {
-        deps.runtime.error?.(danger(`signal ${info.kind} reply failed: ${String(err)}`));
+        logger.error(
+          { sessionKey: route.sessionKey, error: err },
+          danger(`signal ${info.kind} reply failed: ${String(err)}`),
+        );
       },
       onReplyStart: typingCallbacks.onReplyStart,
     });

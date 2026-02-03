@@ -413,7 +413,12 @@ export async function monitorWebChannel(
         },
         "web reconnect: max attempts reached; continuing in degraded mode",
       );
-      runtime.error(
+      reconnectLogger.error(
+        {
+          sessionKey: connectRoute.sessionKey,
+          reconnectAttempts,
+          maxAttempts: reconnectPolicy.maxAttempts,
+        },
         `WhatsApp Web reconnect: max attempts reached (${reconnectAttempts}/${reconnectPolicy.maxAttempts}). Stopping web monitoring.`,
       );
       await closeListener();
@@ -431,7 +436,14 @@ export async function monitorWebChannel(
       },
       "web reconnect: scheduling retry",
     );
-    runtime.error(
+    reconnectLogger.warn(
+      {
+        sessionKey: connectRoute.sessionKey,
+        status: statusCode,
+        retry: `${reconnectAttempts}/${reconnectPolicy.maxAttempts || "∞"}`,
+        delayMs: delay,
+        error: errorStr,
+      },
       `WhatsApp Web connection closed (status ${statusCode}). Retry ${reconnectAttempts}/${reconnectPolicy.maxAttempts || "∞"} in ${formatDurationMs(delay)}… (${errorStr})`,
     );
     await closeListener();

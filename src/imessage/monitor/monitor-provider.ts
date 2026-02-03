@@ -35,6 +35,7 @@ import {
 import { readSessionUpdatedAt, resolveStorePath } from "../../config/sessions.js";
 import { danger, logVerbose, shouldLogVerbose } from "../../globals.js";
 import { waitForTransportReady } from "../../infra/transport-ready.js";
+import { getChildLogger } from "../../logging.js";
 import { mediaKindFromMime } from "../../media/constants.js";
 import { buildPairingReply } from "../../pairing/pairing-messages.js";
 import {
@@ -552,6 +553,7 @@ export async function monitorIMessageProvider(opts: MonitorIMessageOpts = {}): P
     }
 
     const prefixContext = createReplyPrefixContext({ cfg, agentId: route.agentId });
+    const logger = getChildLogger({ module: "imessage-reply" });
 
     const dispatcher = createReplyDispatcher({
       responsePrefix: prefixContext.responsePrefix,
@@ -569,7 +571,10 @@ export async function monitorIMessageProvider(opts: MonitorIMessageOpts = {}): P
         });
       },
       onError: (err, info) => {
-        runtime.error?.(danger(`imessage ${info.kind} reply failed: ${String(err)}`));
+        logger.error(
+          { sessionKey: route.sessionKey, error: err },
+          danger(`imessage ${info.kind} reply failed: ${String(err)}`),
+        );
       },
     });
 
