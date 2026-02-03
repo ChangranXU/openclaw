@@ -13,4 +13,3 @@ class Envelope:
     openclawConfigDir: Optional[str]
     context: Optional[Dict[str, Any]]
     payload: Optional[Dict[str, Any]]
-

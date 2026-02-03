@@ -66,10 +66,22 @@ def load_settings(plugin_dir: Path) -> Settings:
     ipc_file = Path(ipc_raw).expanduser().resolve() if ipc_raw else None
 
     env_from_plugin = _parse_dotenv(plugin_dir / ".env")
-    public_key = (env_from_plugin.get("LANGFUSE_PUBLIC_KEY") or os.environ.get("LANGFUSE_PUBLIC_KEY") or "").strip()
-    secret_key = (env_from_plugin.get("LANGFUSE_SECRET_KEY") or os.environ.get("LANGFUSE_SECRET_KEY") or "").strip()
+    public_key = (
+        env_from_plugin.get("LANGFUSE_PUBLIC_KEY")
+        or os.environ.get("LANGFUSE_PUBLIC_KEY")
+        or ""
+    ).strip()
+    secret_key = (
+        env_from_plugin.get("LANGFUSE_SECRET_KEY")
+        or os.environ.get("LANGFUSE_SECRET_KEY")
+        or ""
+    ).strip()
     base_url = (
-        (env_from_plugin.get("LANGFUSE_BASE_URL") or os.environ.get("LANGFUSE_BASE_URL") or "https://cloud.langfuse.com")
+        (
+            env_from_plugin.get("LANGFUSE_BASE_URL")
+            or os.environ.get("LANGFUSE_BASE_URL")
+            or "https://cloud.langfuse.com"
+        )
         .strip()
         .rstrip("/")
     )
@@ -94,4 +106,3 @@ def load_settings(plugin_dir: Path) -> Settings:
         ),
         openclaw_json=openclaw_json,
     )
-

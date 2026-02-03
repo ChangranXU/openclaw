@@ -43,7 +43,9 @@ def _load_tail_state(state_file: Path) -> Optional[TailState]:
 def _save_tail_state(state_file: Path, state: TailState) -> None:
     try:
         state_file.parent.mkdir(parents=True, exist_ok=True)
-        state_file.write_text(json.dumps({"offset": state.offset, "inode": state.inode}), encoding="utf-8")
+        state_file.write_text(
+            json.dumps({"offset": state.offset, "inode": state.inode}), encoding="utf-8"
+        )
     except Exception:
         pass
 
@@ -124,4 +126,3 @@ def tail_jsonl(
                 time.sleep(poll_interval_s)
         except Exception:
             time.sleep(poll_interval_s)
-

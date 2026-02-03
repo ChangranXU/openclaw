@@ -4,7 +4,7 @@ import sys
 import time
 import threading
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional
 
 try:
     # v3 exposes Langfuse here
@@ -65,7 +65,9 @@ class TraceManager:
             return hashlib.sha256(seed.encode("utf-8")).digest()[:16].hex()
         return Langfuse.create_trace_id(seed=seed)
 
-    def get_or_create_trace(self, *, trace_seed: str, session_key: Optional[str], channel: Optional[str]) -> TraceState:
+    def get_or_create_trace(
+        self, *, trace_seed: str, session_key: Optional[str], channel: Optional[str]
+    ) -> TraceState:
         with self._lock:
             state = self._traces.get(trace_seed)
             if state:
@@ -77,7 +79,10 @@ class TraceManager:
                 return state
 
             trace_id = self._trace_id_for_seed(trace_seed)
-            root = self._client.start_span(trace_context={"trace_id": trace_id}, name=f"openclaw_session_{trace_seed[:8]}")
+            root = self._client.start_span(
+                trace_context={"trace_id": trace_id},
+                name=f"openclaw_session_{trace_seed[:8]}",
+            )
             root_id = _span_id_hex(root)
 
             # Set trace-level attributes via root span when possible
@@ -102,7 +107,9 @@ class TraceManager:
             self._traces[trace_seed] = state
             return state
 
-    def start_run_span(self, trace_seed: str, *, name: str, metadata: Optional[Dict[str, Any]] = None) -> None:
+    def start_run_span(
+        self, trace_seed: str, *, name: str, metadata: Optional[Dict[str, Any]] = None
+    ) -> None:
         with self._lock:
             state = self._traces.get(trace_seed)
             if not state or not state.root_span_id:
@@ -110,7 +117,10 @@ class TraceManager:
             if state.run_span is not None:
                 return
             span = self._client.start_span(
-                trace_context={"trace_id": state.trace_id, "parent_span_id": state.root_span_id},
+                trace_context={
+                    "trace_id": state.trace_id,
+                    "parent_span_id": state.root_span_id,
+                },
                 name=name,
                 metadata=metadata,
             )
@@ -151,7 +161,13 @@ class TraceManager:
         except Exception as err:
             self._report_error(err)
 
-    def end_run_span(self, trace_seed: str, *, status_message: Optional[str] = None, level: Optional[str] = None) -> None:
+    def end_run_span(
+        self,
+        trace_seed: str,
+        *,
+        status_message: Optional[str] = None,
+        level: Optional[str] = None,
+    ) -> None:
         with self._lock:
             state = self._traces.get(trace_seed)
             if not state or not state.run_span:
@@ -188,7 +204,10 @@ class TraceManager:
             if tool_call_id in state.tool_spans:
                 return
             span = self._client.start_observation(
-                trace_context={"trace_id": state.trace_id, "parent_span_id": parent_span_id},
+                trace_context={
+                    "trace_id": state.trace_id,
+                    "parent_span_id": parent_span_id,
+                },
                 name=f"tool:{tool_name}",
                 as_type="tool",
                 input=input_data,
@@ -203,6 +222,8 @@ class TraceManager:
         tool_call_id: str,
         output_data: Any,
         error: Optional[str],
+        level: Optional[str] = None,
+        status_message: Optional[str] = None,
         duration_ms: Optional[float],
         input_data: Any,
         extra_metadata: Optional[Dict[str, Any]] = None,
@@ -222,10 +243,16 @@ class TraceManager:
                     meta["input"] = input_data
             if isinstance(extra_metadata, dict):
                 meta.update(extra_metadata)
+            final_status = status_message if status_message is not None else error
+            final_level = (
+                level if level is not None else ("ERROR" if error else "DEFAULT")
+            )
+            if final_level == "WARNING" and final_status and "warning" not in meta:
+                meta["warning"] = final_status
             span.update(
                 output=output_data,
-                status_message=error,
-                level="ERROR" if error else "DEFAULT",
+                status_message=final_status,
+                level=final_level,
                 metadata=meta or None,
             )
         except Exception as err:
@@ -258,15 +285,21 @@ class TraceManager:
             if not parent_span_id:
                 return
             trace_id = state.trace_id
-            session_key = state.session_key
-            channel = state.channel
+            # session_key/channel are trace-level metadata; generation observation
+            # only needs parent_span_id + trace_id.
 
         # Match OpenClaw build exports: usageDetails has input/output/total, and
         # costDetails has input/output/total when available.
         usage_details: Dict[str, int] = {}
-        in_tok = usage.get("input") or usage.get("promptTokens") or usage.get("prompt_tokens")
+        in_tok = (
+            usage.get("input")
+            or usage.get("promptTokens")
+            or usage.get("prompt_tokens")
+        )
         out_tok = usage.get("output") or usage.get("completion_tokens")
-        total_tok = usage.get("total") or usage.get("totalTokens") or usage.get("total_tokens")
+        total_tok = (
+            usage.get("total") or usage.get("totalTokens") or usage.get("total_tokens")
+        )
         if isinstance(in_tok, int):
             usage_details["input"] = in_tok
         if isinstance(out_tok, int):
@@ -390,4 +423,3 @@ class TraceManager:
         except Exception as err:
             # Surface flush issues (auth/network) to gateway logs.
             self._report_error(err)
-

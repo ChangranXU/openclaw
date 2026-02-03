@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from dataclasses import field
 from typing import Any, Deque, Dict, Iterable, Optional, Tuple
 from collections import deque
+from pathlib import Path
+import json
 import re
 import uuid
 import time
@@ -46,12 +48,16 @@ def _now_ms() -> int:
 
 def _channel_from_any(envelope: JsonDict) -> Optional[str]:
     ctx = envelope.get("context") if isinstance(envelope.get("context"), dict) else {}
-    payload = envelope.get("payload") if isinstance(envelope.get("payload"), dict) else {}
+    payload = (
+        envelope.get("payload") if isinstance(envelope.get("payload"), dict) else {}
+    )
     ch = _coerce_str(ctx.get("channelId")) or _coerce_str(ctx.get("channel"))
     if ch:
         return ch.strip().lower()
     # before_agent_start often has messageProvider
-    ch = _coerce_str(ctx.get("messageProvider")) or _coerce_str(payload.get("messageProvider"))
+    ch = _coerce_str(ctx.get("messageProvider")) or _coerce_str(
+        payload.get("messageProvider")
+    )
     if ch:
         return ch.strip().lower()
     # message_received often has metadata.provider
@@ -78,9 +84,15 @@ def _channel_from_any(envelope: JsonDict) -> Optional[str]:
 def _conv_key_from_message_envelope(envelope: JsonDict) -> Optional[str]:
     ctx = envelope.get("context") if isinstance(envelope.get("context"), dict) else {}
     channel = _coerce_str(ctx.get("channelId")) or _coerce_str(ctx.get("channel"))
-    conv = _coerce_str(ctx.get("conversationId")) or _coerce_str(ctx.get("chatId")) or _coerce_str(ctx.get("threadId"))
+    conv = (
+        _coerce_str(ctx.get("conversationId"))
+        or _coerce_str(ctx.get("chatId"))
+        or _coerce_str(ctx.get("threadId"))
+    )
     if not conv:
-        payload = envelope.get("payload") if isinstance(envelope.get("payload"), dict) else {}
+        payload = (
+            envelope.get("payload") if isinstance(envelope.get("payload"), dict) else {}
+        )
         # Fallbacks for channels that don't provide conversationId in context.
         conv = _coerce_str(payload.get("from")) or _coerce_str(payload.get("senderId"))
     if not channel or not conv:
@@ -88,7 +100,9 @@ def _conv_key_from_message_envelope(envelope: JsonDict) -> Optional[str]:
     return f"{channel.lower()}:{conv}"
 
 
-def _conv_key_from_prompt(prompt: Any, *, preferred_channel: Optional[str] = None) -> Optional[str]:
+def _conv_key_from_prompt(
+    prompt: Any, *, preferred_channel: Optional[str] = None
+) -> Optional[str]:
     p = _coerce_str(prompt)
     if not p:
         return None
@@ -210,26 +224,35 @@ def _iso_from_ts_ms(ts_ms: Any) -> Optional[str]:
     try:
         import datetime
 
-        return datetime.datetime.fromtimestamp(float(ts_ms) / 1000.0, tz=datetime.timezone.utc).isoformat()
+        return datetime.datetime.fromtimestamp(
+            float(ts_ms) / 1000.0, tz=datetime.timezone.utc
+        ).isoformat()
     except Exception:
         return None
 
 
 def _extract_tool_name(envelope: JsonDict) -> Optional[str]:
     ctx = envelope.get("context") if isinstance(envelope.get("context"), dict) else {}
-    payload = envelope.get("payload") if isinstance(envelope.get("payload"), dict) else {}
+    payload = (
+        envelope.get("payload") if isinstance(envelope.get("payload"), dict) else {}
+    )
     return _coerce_str(ctx.get("toolName")) or _coerce_str(payload.get("toolName"))
+
 
 def _extract_tool_call_id(envelope: JsonDict) -> Optional[str]:
     ctx = envelope.get("context") if isinstance(envelope.get("context"), dict) else {}
-    payload = envelope.get("payload") if isinstance(envelope.get("payload"), dict) else {}
+    payload = (
+        envelope.get("payload") if isinstance(envelope.get("payload"), dict) else {}
+    )
     # Most builds put it in context; keep payload fallback for compatibility.
     return _coerce_str(ctx.get("toolCallId")) or _coerce_str(payload.get("toolCallId"))
 
 
 def _extract_session_key(envelope: JsonDict) -> Optional[str]:
     ctx = envelope.get("context") if isinstance(envelope.get("context"), dict) else {}
-    payload = envelope.get("payload") if isinstance(envelope.get("payload"), dict) else {}
+    payload = (
+        envelope.get("payload") if isinstance(envelope.get("payload"), dict) else {}
+    )
     return _coerce_str(ctx.get("sessionKey")) or _coerce_str(payload.get("sessionKey"))
 
 
@@ -239,16 +262,176 @@ def _extract_agent_id(envelope: JsonDict) -> Optional[str]:
 
 
 def _extract_tool_input(envelope: JsonDict) -> Any:
-    payload = envelope.get("payload") if isinstance(envelope.get("payload"), dict) else {}
+    payload = (
+        envelope.get("payload") if isinstance(envelope.get("payload"), dict) else {}
+    )
     params = payload.get("params")
     return params if params is not None else payload
 
 
-def _extract_tool_output_from_result_persist(envelope: JsonDict) -> Tuple[Any, Optional[str]]:
+def _try_parse_json_obj(text: Any) -> Any:
+    if not isinstance(text, str):
+        return None
+    s = text.strip()
+    if not s:
+        return None
+    if s[0] not in ("{", "["):
+        return None
+    # Avoid pathological parsing on huge payloads; Langfuse output is still kept as-is.
+    if len(s) > 200_000:
+        return None
+    try:
+        return json.loads(s)
+    except Exception:
+        return None
+
+
+def _infer_tool_error_from_output(output: Any) -> Optional[str]:
+    """
+    Some tool hooks don't provide a dedicated `error` field; instead the tool
+    result encodes an error as JSON like:
+      {"status":"error","tool":"exec","error":"..."}
+
+    Langfuse highlights errors primarily via `level=ERROR` and `statusMessage`.
+    This helper tries to infer a reasonable error message from the output.
+    """
+    if isinstance(output, dict):
+        status = _coerce_str(output.get("status"))
+        status_l = status.lower() if status else None
+        # If the tool explicitly reports a warning, don't treat it as an error.
+        # (Warning inference is handled separately.)
+        if status_l in ("warning", "warn"):
+            return None
+        if status_l in ("error", "failed", "failure"):
+            return (
+                _coerce_str(output.get("error"))
+                or _coerce_str(output.get("message"))
+                or "tool_error"
+            )
+        if (
+            output.get("isError") is True
+            or output.get("ok") is False
+            or output.get("success") is False
+        ):
+            return (
+                _coerce_str(output.get("error"))
+                or _coerce_str(output.get("message"))
+                or "tool_error"
+            )
+
+        # Some tools encode fatal failures as {"disabled": true, "error": "..."}
+        # without setting status/isError. Treat those as errors so Langfuse shows them.
+        if output.get("disabled") is True:
+            disabled_err = _coerce_str(output.get("error")) or _coerce_str(
+                output.get("message")
+            )
+            if disabled_err:
+                return disabled_err
+
+        # Conservative: if an "error" field exists (and isn't just an empty string),
+        # treat it as an error when the output otherwise indicates failure/no-result.
+        # This avoids missing real errors like "No API key found..." while reducing
+        # false positives on successful outputs.
+        err_field = _coerce_str(output.get("error"))
+        if err_field:
+            if (
+                status_l in ("error", "failed", "failure", "disabled")
+                or output.get("results") == []
+                or output.get("result") is None
+            ):
+                return err_field
+
+        # Last resort: some tools use stderr-ish fields.
+        stderr = _coerce_str(output.get("stderr")) or _coerce_str(output.get("stdErr"))
+        if stderr and status_l and status_l != "success":
+            return stderr
+        return None
+
+    if isinstance(output, str):
+        parsed = _try_parse_json_obj(output)
+        if parsed is not None:
+            return _infer_tool_error_from_output(parsed)
+        return None
+
+    if isinstance(output, list):
+        # Common shapes:
+        # - langfuse message content: [{type:"text", text:"..."}]
+        # - tool output streams: list of chunks/dicts
+        texts: list[str] = []
+        for part in output:
+            if isinstance(part, dict):
+                t = _coerce_str(part.get("text"))
+                if t:
+                    texts.append(t)
+        if texts:
+            return _infer_tool_error_from_output("\n".join(texts))
+        return None
+
+    return None
+
+
+def _infer_tool_warning_from_output(output: Any) -> Optional[str]:
+    """
+    Infer a warning message from tool output without treating it as an error.
+    We only return a warning when the structure clearly indicates a warning.
+    """
+    if isinstance(output, dict):
+        status = _coerce_str(output.get("status"))
+        status_l = status.lower() if status else None
+        if status_l in ("warning", "warn"):
+            return (
+                _coerce_str(output.get("warning"))
+                or _coerce_str(output.get("message"))
+                or _coerce_str(output.get("detail"))
+                or "tool_warning"
+            )
+        # Some tools provide warnings alongside success.
+        warn = _coerce_str(output.get("warning")) or _coerce_str(output.get("warn"))
+        if warn:
+            return warn
+        warns = output.get("warnings")
+        if isinstance(warns, list):
+            parts: list[str] = []
+            for w in warns:
+                if isinstance(w, str) and w.strip():
+                    parts.append(w.strip())
+                elif isinstance(w, dict):
+                    t = _coerce_str(w.get("message")) or _coerce_str(w.get("warning"))
+                    if t:
+                        parts.append(t)
+            if parts:
+                return "\n".join(parts)
+        return None
+
+    if isinstance(output, str):
+        parsed = _try_parse_json_obj(output)
+        if parsed is not None:
+            return _infer_tool_warning_from_output(parsed)
+        return None
+
+    if isinstance(output, list):
+        texts: list[str] = []
+        for part in output:
+            if isinstance(part, dict):
+                t = _coerce_str(part.get("text"))
+                if t:
+                    texts.append(t)
+        if texts:
+            return _infer_tool_warning_from_output("\n".join(texts))
+        return None
+
+    return None
+
+
+def _extract_tool_output_from_result_persist(
+    envelope: JsonDict,
+) -> Tuple[Any, Optional[str]]:
     """
     Returns (output_data, error_message).
     """
-    payload = envelope.get("payload") if isinstance(envelope.get("payload"), dict) else {}
+    payload = (
+        envelope.get("payload") if isinstance(envelope.get("payload"), dict) else {}
+    )
     msg = payload.get("message") if isinstance(payload.get("message"), dict) else {}
     is_error = msg.get("isError") is True
     content = msg.get("content")
@@ -267,6 +450,8 @@ def _extract_tool_output_from_result_persist(envelope: JsonDict) -> Tuple[Any, O
     err: Optional[str] = None
     if is_error:
         err = _coerce_str(msg.get("error")) or "tool_error"
+    if err is None:
+        err = _infer_tool_error_from_output(out)
     return out, err
 
 
@@ -280,7 +465,11 @@ def _iter_assistant_messages(messages: Any) -> Iterable[JsonDict]:
         if _coerce_str(m.get("role")) != "assistant":
             continue
         # Only treat as a "generation" when we have model/provider/usage data.
-        if not (_coerce_str(m.get("model")) or _coerce_str(m.get("provider")) or isinstance(m.get("usage"), dict)):
+        if not (
+            _coerce_str(m.get("model"))
+            or _coerce_str(m.get("provider"))
+            or isinstance(m.get("usage"), dict)
+        ):
             continue
         out.append(m)
     return out
@@ -379,7 +568,9 @@ class LangfuseEventRouter:
     trace_manager: Optional[TraceManager]
     # Key: "{session_key}:{agent_id}:{tool_name}" (without trace_seed)
     # Value: deque of (local_id, start_ts_int, session_key, agent_id, trace_seed)
-    _pending_tools: Dict[str, Deque[Tuple[str, int, Optional[str], Optional[str], str]]] = field(default_factory=dict)
+    _pending_tools: Dict[
+        str, Deque[Tuple[str, int, Optional[str], Optional[str], str]]
+    ] = field(default_factory=dict)
     # after_tool_call doesn't include toolCallId, and tool_result_persist may be
     # absent for some tools/results. Buffer after_tool_call completions briefly
     # so tool_result_persist can "win" when it does arrive, otherwise we end
@@ -387,21 +578,40 @@ class LangfuseEventRouter:
     #
     # Key matches the before_tool_call key form for tool hooks without toolCallId:
     #   "k:{sessionKey}:{agentId}:{toolName}"
-    # Value: deque of (end_ts_int, result, error, duration_ms, trace_seed_at_end)
-    _pending_tool_completions: Dict[str, Deque[Tuple[int, Any, Optional[str], Optional[float], str]]] = field(
-        default_factory=dict
-    )
+    # Value: deque of (end_ts_int, result, error, duration_ms, trace_seed_at_end, level, status_message)
+    _pending_tool_completions: Dict[
+        str,
+        Deque[
+            Tuple[
+                int,
+                Any,
+                Optional[str],
+                Optional[float],
+                str,
+                Optional[str],
+                Optional[str],
+            ]
+        ],
+    ] = field(default_factory=dict)
     _tool_completion_flush_delay_ms: int = 750
     _seen_generation_keys: set[str] = field(default_factory=set)
     _gen_seq: Dict[str, int] = field(default_factory=dict)
     # Route all events for a session into one Langfuse trace seed.
-    _conv_active_seed: Dict[str, str] = field(default_factory=dict)  # conv_key -> trace_seed
-    _agent_active_seed: Dict[str, str] = field(default_factory=dict)  # agentId -> trace_seed
-    _session_active_seed: Dict[str, str] = field(default_factory=dict)  # sessionKey -> trace_seed
+    _conv_active_seed: Dict[str, str] = field(
+        default_factory=dict
+    )  # conv_key -> trace_seed
+    _agent_active_seed: Dict[str, str] = field(
+        default_factory=dict
+    )  # agentId -> trace_seed
+    _session_active_seed: Dict[str, str] = field(
+        default_factory=dict
+    )  # sessionKey -> trace_seed
     # When prompts don't include conversation ids (common for session-start
     # synthetic messages), bind the first subsequent message on the same
     # channel to the most recent seed.
-    _channel_last_seed: Dict[str, Tuple[str, int]] = field(default_factory=dict)  # channel -> (seed, ts_ms)
+    _channel_last_seed: Dict[str, Tuple[str, int]] = field(
+        default_factory=dict
+    )  # channel -> (seed, ts_ms)
 
     _channel_bind_window_ms: int = 120_000  # 2 minutes
     persistence_path: Optional[Path] = None
@@ -434,19 +644,36 @@ class LangfuseEventRouter:
                 continue
 
             while cq and sq and now_ms - cq[0][0] >= delay:
-                end_ts_int, result, err, duration_evt, trace_seed_end = cq.popleft()
+                (
+                    end_ts_int,
+                    result,
+                    err,
+                    duration_evt,
+                    trace_seed_end,
+                    level,
+                    status_message,
+                ) = cq.popleft()
                 local_id, start_ts_int, _sk, _aid, trace_seed_start = sq.popleft()
                 effective_trace_seed = trace_seed_start or trace_seed_end
 
-                duration_ms: Optional[float] = duration_evt if isinstance(duration_evt, (int, float)) else None
-                if duration_ms is None and isinstance(end_ts_int, int) and isinstance(start_ts_int, int) and end_ts_int >= start_ts_int:
+                duration_ms: Optional[float] = (
+                    duration_evt if isinstance(duration_evt, (int, float)) else None
+                )
+                if (
+                    duration_ms is None
+                    and isinstance(end_ts_int, int)
+                    and isinstance(start_ts_int, int)
+                    and end_ts_int >= start_ts_int
+                ):
                     duration_ms = float(end_ts_int - start_ts_int)
 
                 self.trace_manager.end_tool_span(
                     effective_trace_seed,
                     tool_call_id=local_id,
                     output_data=result,
-                    error=err,
+                    error=err or _infer_tool_error_from_output(result),
+                    level=level,
+                    status_message=status_message,
                     duration_ms=duration_ms,
                     input_data=None,
                     extra_metadata={"endedBy": "hook.after_tool_call"},
@@ -459,11 +686,27 @@ class LangfuseEventRouter:
                 self._pending_tools.pop(key, None)
 
     @staticmethod
-    def create(*, public_key: Optional[str], secret_key: Optional[str], base_url: str, persistence_path: Optional[Path] = None) -> "LangfuseEventRouter":
+    def create(
+        *,
+        public_key: Optional[str],
+        secret_key: Optional[str],
+        base_url: str,
+        persistence_path: Optional[Path] = None,
+    ) -> "LangfuseEventRouter":
         if Langfuse is None or not public_key or not secret_key:
             return LangfuseEventRouter(enabled=False, trace_manager=None)
-        client = Langfuse(public_key=public_key, secret_key=secret_key, base_url=base_url, flush_at=15, flush_interval=10)
-        router = LangfuseEventRouter(enabled=True, trace_manager=TraceManager(client), persistence_path=persistence_path)
+        client = Langfuse(
+            public_key=public_key,
+            secret_key=secret_key,
+            base_url=base_url,
+            flush_at=15,
+            flush_interval=10,
+        )
+        router = LangfuseEventRouter(
+            enabled=True,
+            trace_manager=TraceManager(client),
+            persistence_path=persistence_path,
+        )
         router._load_state()
         return router
 
@@ -472,6 +715,7 @@ class LangfuseEventRouter:
             return
         try:
             import json
+
             data = json.loads(self.persistence_path.read_text(encoding="utf-8"))
             if isinstance(data, dict):
                 self._conv_active_seed = data.get("conv", {})
@@ -495,14 +739,29 @@ class LangfuseEventRouter:
             return
         try:
             import json
+
             # Prevent unbounded growth: keep genSeq only for seeds that are still
             # reachable from our routing maps (plus recent channel bindings).
             active_seeds: set[str] = set()
-            active_seeds.update(v for v in self._conv_active_seed.values() if isinstance(v, str))
-            active_seeds.update(v for v in self._agent_active_seed.values() if isinstance(v, str))
-            active_seeds.update(v for v in self._session_active_seed.values() if isinstance(v, str))
-            active_seeds.update(seed for (seed, _ts) in self._channel_last_seed.values() if isinstance(seed, str))
-            gen_seq_out = {k: v for k, v in self._gen_seq.items() if k in active_seeds and isinstance(v, int) and v >= 0}
+            active_seeds.update(
+                v for v in self._conv_active_seed.values() if isinstance(v, str)
+            )
+            active_seeds.update(
+                v for v in self._agent_active_seed.values() if isinstance(v, str)
+            )
+            active_seeds.update(
+                v for v in self._session_active_seed.values() if isinstance(v, str)
+            )
+            active_seeds.update(
+                seed
+                for (seed, _ts) in self._channel_last_seed.values()
+                if isinstance(seed, str)
+            )
+            gen_seq_out = {
+                k: v
+                for k, v in self._gen_seq.items()
+                if k in active_seeds and isinstance(v, int) and v >= 0
+            }
             data = {
                 "conv": self._conv_active_seed,
                 "agent": self._agent_active_seed,
@@ -510,7 +769,9 @@ class LangfuseEventRouter:
                 "channel": self._channel_last_seed,
                 "genSeq": gen_seq_out,
             }
-            self.persistence_path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+            self.persistence_path.write_text(
+                json.dumps(data, ensure_ascii=False), encoding="utf-8"
+            )
         except Exception:
             pass
 
@@ -551,9 +812,14 @@ class LangfuseEventRouter:
 
         session_key = _session_key_from_envelope(envelope)
         channel = _channel_from_envelope(envelope)
-        state = self.trace_manager.get_or_create_trace(trace_seed=trace_seed, session_key=session_key, channel=channel)
+        # Ensure trace exists and has updated routing metadata.
+        self.trace_manager.get_or_create_trace(
+            trace_seed=trace_seed, session_key=session_key, channel=channel
+        )
 
-        payload = envelope.get("payload") if isinstance(envelope.get("payload"), dict) else {}
+        payload = (
+            envelope.get("payload") if isinstance(envelope.get("payload"), dict) else {}
+        )
 
         # Hook-derived spans/generations for parity with OpenClaw build traces.
         # These are emitted even when no diagnostic events are present.
@@ -569,7 +835,9 @@ class LangfuseEventRouter:
                         trace_seed,
                         name="session:reset",
                         metadata={
-                            "command": (msg_text or "").strip().split(maxsplit=1)[0] if isinstance(msg_text, str) else None,
+                            "command": (msg_text or "").strip().split(maxsplit=1)[0]
+                            if isinstance(msg_text, str)
+                            else None,
                             "channel": _channel_from_any(envelope),
                             "sessionKey": session_key2,
                             "agentId": agent_id,
@@ -586,19 +854,29 @@ class LangfuseEventRouter:
                     name="session_state:processing",
                     level="DEFAULT",
                     status_message=None,
-                    metadata={"agentId": agent_id, "sessionKey": session_key2, "startedAt": _iso_from_ts_ms(envelope.get("ts"))},
+                    metadata={
+                        "agentId": agent_id,
+                        "sessionKey": session_key2,
+                        "startedAt": _iso_from_ts_ms(envelope.get("ts")),
+                    },
                 )
                 self.trace_manager.start_run_span(
                     trace_seed,
                     name="session:processing",
-                    metadata={"agentId": agent_id, "sessionKey": session_key2, "prompt": payload.get("prompt")},
+                    metadata={
+                        "agentId": agent_id,
+                        "sessionKey": session_key2,
+                        "prompt": payload.get("prompt"),
+                    },
                 )
                 return
 
             if kind == "hook.agent_end" and isinstance(payload, dict):
                 # Ensure any pending after_tool_call completions are flushed at end of run.
                 try:
-                    self._flush_tool_completions(now_ms=_now_ms() + self._tool_completion_flush_delay_ms)
+                    self._flush_tool_completions(
+                        now_ms=_now_ms() + self._tool_completion_flush_delay_ms
+                    )
                 except Exception:
                     pass
                 # Record ONLY the user-visible generation (avoid redundant internal calls).
@@ -612,7 +890,11 @@ class LangfuseEventRouter:
                         continue
                     if _coerce_str(m.get("role")) != "assistant":
                         continue
-                    if not (_coerce_str(m.get("model")) or _coerce_str(m.get("provider")) or isinstance(m.get("usage"), dict)):
+                    if not (
+                        _coerce_str(m.get("model"))
+                        or _coerce_str(m.get("provider"))
+                        or isinstance(m.get("usage"), dict)
+                    ):
                         continue
                     assistant_idxs.append(i)
 
@@ -622,7 +904,9 @@ class LangfuseEventRouter:
                     if not isinstance(m, dict):
                         continue
                     model = _coerce_str(m.get("model"))
-                    provider_raw = _coerce_str(m.get("provider")) or _coerce_str(m.get("api"))
+                    provider_raw = _coerce_str(m.get("provider")) or _coerce_str(
+                        m.get("api")
+                    )
                     if provider_raw == "openclaw" or model == "delivery-mirror":
                         continue
                     picked_idx = i
@@ -635,11 +919,23 @@ class LangfuseEventRouter:
                     if isinstance(msg, dict):
                         ts = msg.get("timestamp")
                         model = _coerce_str(msg.get("model"))
-                        provider = _coerce_str(msg.get("provider")) or _coerce_str(msg.get("api"))
-                        usage = msg.get("usage") if isinstance(msg.get("usage"), dict) else {}
-                        cost = usage.get("cost") if isinstance(usage.get("cost"), dict) else {}
+                        provider = _coerce_str(msg.get("provider")) or _coerce_str(
+                            msg.get("api")
+                        )
+                        usage = (
+                            msg.get("usage")
+                            if isinstance(msg.get("usage"), dict)
+                            else {}
+                        )
+                        cost = (
+                            usage.get("cost")
+                            if isinstance(usage.get("cost"), dict)
+                            else {}
+                        )
                         out_text = _assistant_text(msg)
-                        in_text = _generation_input_for_index(msg_list, picked_idx) or _coerce_str(payload.get("prompt"))
+                        in_text = _generation_input_for_index(
+                            msg_list, picked_idx
+                        ) or _coerce_str(payload.get("prompt"))
 
                         # Deduplicate across replays.
                         gen_key = f"{trace_seed}:{ts}:{model}:{provider}:{usage.get('input')}:{usage.get('output')}:{usage.get('total') or usage.get('totalTokens')}"
@@ -661,8 +957,12 @@ class LangfuseEventRouter:
                                 input_text=in_text,
                                 output_text=out_text,
                                 usage=usage,
-                                cost_usd=cost.get("total") if isinstance(cost.get("total"), (int, float)) else None,
-                                duration_ms=usage.get("durationMs") if isinstance(usage.get("durationMs"), (int, float)) else None,
+                                cost_usd=cost.get("total")
+                                if isinstance(cost.get("total"), (int, float))
+                                else None,
+                                duration_ms=usage.get("durationMs")
+                                if isinstance(usage.get("durationMs"), (int, float))
+                                else None,
                                 has_user_visible_reply=True,
                                 cost_details=cost if isinstance(cost, dict) else None,
                             )
@@ -672,7 +972,11 @@ class LangfuseEventRouter:
                     name="session_state:idle",
                     level="DEFAULT",
                     status_message=None,
-                    metadata={"agentId": agent_id, "sessionKey": session_key2, "endedAt": _iso_from_ts_ms(envelope.get("ts"))},
+                    metadata={
+                        "agentId": agent_id,
+                        "sessionKey": session_key2,
+                        "endedAt": _iso_from_ts_ms(envelope.get("ts")),
+                    },
                 )
                 self.trace_manager.end_run_span(trace_seed)
                 return
@@ -682,11 +986,18 @@ class LangfuseEventRouter:
                 tool_call_id = _extract_tool_call_id(envelope)
                 ts_ms = envelope.get("ts")
                 ts_int = int(ts_ms) if isinstance(ts_ms, (int, float)) else 0
-                local_id = tool_call_id or f"hook:{session_key2 or 'no_session'}:{agent_id or 'no_agent'}:{tool_name}:{ts_int}"
+                local_id = (
+                    tool_call_id
+                    or f"hook:{session_key2 or 'no_session'}:{agent_id or 'no_agent'}:{tool_name}:{ts_int}"
+                )
 
                 # Key without trace_seed so we can match on tool_result_persist
                 # even if routing context changes due to queued messages
-                key = f"id:{tool_call_id}" if tool_call_id else f"k:{session_key2}:{agent_id}:{tool_name}"
+                key = (
+                    f"id:{tool_call_id}"
+                    if tool_call_id
+                    else f"k:{session_key2}:{agent_id}:{tool_name}"
+                )
                 q = self._pending_tools.get(key)
                 if q is None:
                     q = deque()
@@ -708,23 +1019,47 @@ class LangfuseEventRouter:
                 # if tool_result_persist arrives, it wins; otherwise we end the span using this.
                 tool_name = _extract_tool_name(envelope) or "unknown_tool"
                 end_ts_ms = envelope.get("ts")
-                end_ts_int = int(end_ts_ms) if isinstance(end_ts_ms, (int, float)) else _now_ms()
+                end_ts_int = (
+                    int(end_ts_ms) if isinstance(end_ts_ms, (int, float)) else _now_ms()
+                )
                 result = payload.get("result")
-                err = _coerce_str(payload.get("error"))
-                duration_evt = payload.get("durationMs") if isinstance(payload.get("durationMs"), (int, float)) else None
+                err = _coerce_str(
+                    payload.get("error")
+                ) or _infer_tool_error_from_output(result)
+                duration_evt = (
+                    payload.get("durationMs")
+                    if isinstance(payload.get("durationMs"), (int, float))
+                    else None
+                )
+                warn = _infer_tool_warning_from_output(result) if not err else None
+                level = "WARNING" if warn else None
+                status_message = warn
 
                 key_k = f"k:{session_key2}:{agent_id}:{tool_name}"
                 cq = self._pending_tool_completions.get(key_k)
                 if cq is None:
                     cq = deque()
                     self._pending_tool_completions[key_k] = cq
-                cq.append((end_ts_int, result, err, duration_evt, trace_seed))
+                cq.append(
+                    (
+                        end_ts_int,
+                        result,
+                        err,
+                        duration_evt,
+                        trace_seed,
+                        level,
+                        status_message,
+                    )
+                )
                 return
 
             if kind == "hook.tool_result_persist":
                 tool_name = _extract_tool_name(envelope) or "unknown_tool"
                 tool_call_id = _extract_tool_call_id(envelope)
                 out, err = _extract_tool_output_from_result_persist(envelope)
+                warn = _infer_tool_warning_from_output(out) if not err else None
+                level = "WARNING" if warn else None
+                status_message = warn
 
                 # Key without trace_seed to match pending tools
                 key_id = f"id:{tool_call_id}" if tool_call_id else None
@@ -750,7 +1085,10 @@ class LangfuseEventRouter:
                 if local_id is None:
                     ts_ms = envelope.get("ts")
                     ts_int = int(ts_ms) if isinstance(ts_ms, (int, float)) else 0
-                    local_id = tool_call_id or f"hook:{session_key2 or 'no_session'}:{agent_id or 'no_agent'}:{tool_name}:{ts_int}"
+                    local_id = (
+                        tool_call_id
+                        or f"hook:{session_key2 or 'no_session'}:{agent_id or 'no_agent'}:{tool_name}:{ts_int}"
+                    )
                     # Start span best-effort (if we missed the start hook).
                     self.trace_manager.start_tool_span(
                         effective_trace_seed,
@@ -763,7 +1101,11 @@ class LangfuseEventRouter:
                 end_ts = envelope.get("ts")
                 end_ts_int = int(end_ts) if isinstance(end_ts, (int, float)) else None
                 duration_ms: Optional[float] = None
-                if start_ts_int is not None and end_ts_int is not None and end_ts_int >= start_ts_int:
+                if (
+                    start_ts_int is not None
+                    and end_ts_int is not None
+                    and end_ts_int >= start_ts_int
+                ):
                     duration_ms = float(end_ts_int - start_ts_int)
 
                 self.trace_manager.end_tool_span(
@@ -771,6 +1113,8 @@ class LangfuseEventRouter:
                     tool_call_id=local_id,
                     output_data=out,
                     error=err,
+                    level=level,
+                    status_message=status_message,
                     duration_ms=duration_ms,
                     input_data=None,
                     extra_metadata={"toolCallId": tool_call_id},
@@ -787,7 +1131,10 @@ class LangfuseEventRouter:
                     self.trace_manager.start_run_span(
                         trace_seed,
                         name="session:processing",
-                        metadata={"reason": reason, "queueDepth": payload.get("queueDepth")},
+                        metadata={
+                            "reason": reason,
+                            "queueDepth": payload.get("queueDepth"),
+                        },
                     )
                     return
                 if state_val in ("idle", "waiting"):
@@ -807,7 +1154,10 @@ class LangfuseEventRouter:
 
             if evt_type == "tool.start":
                 tool_name = _coerce_str(payload.get("toolName")) or "unknown_tool"
-                tool_call_id = _coerce_str(payload.get("toolCallId")) or f"unknown:{payload.get('seq')}"
+                tool_call_id = (
+                    _coerce_str(payload.get("toolCallId"))
+                    or f"unknown:{payload.get('seq')}"
+                )
                 self.trace_manager.start_tool_span(
                     trace_seed,
                     tool_call_id=tool_call_id,
@@ -823,19 +1173,37 @@ class LangfuseEventRouter:
 
             if evt_type == "tool.end":
                 tool_name = _coerce_str(payload.get("toolName")) or "unknown_tool"
-                tool_call_id = _coerce_str(payload.get("toolCallId")) or f"unknown:{payload.get('seq')}"
+                tool_call_id = (
+                    _coerce_str(payload.get("toolCallId"))
+                    or f"unknown:{payload.get('seq')}"
+                )
+                out = payload.get("output")
+                err = _coerce_str(
+                    payload.get("error")
+                ) or _infer_tool_error_from_output(out)
+                warn = _infer_tool_warning_from_output(out) if not err else None
+                level = "WARNING" if warn else None
+                status_message = warn
                 self.trace_manager.end_tool_span(
                     trace_seed,
                     tool_call_id=tool_call_id,
-                    output_data=payload.get("output"),
-                    error=_coerce_str(payload.get("error")),
-                    duration_ms=payload.get("durationMs") if isinstance(payload.get("durationMs"), (int, float)) else None,
+                    output_data=out,
+                    error=err,
+                    level=level,
+                    status_message=status_message,
+                    duration_ms=payload.get("durationMs")
+                    if isinstance(payload.get("durationMs"), (int, float))
+                    else None,
                     input_data=payload.get("input"),
                 )
                 return
 
             if evt_type == "model.usage":
-                usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
+                usage = (
+                    payload.get("usage")
+                    if isinstance(payload.get("usage"), dict)
+                    else {}
+                )
                 seq = payload.get("seq")
                 name = f"model_call:{seq}" if isinstance(seq, int) else "model_call"
                 # Avoid redundant internal model calls; agent_end handler already
@@ -850,10 +1218,16 @@ class LangfuseEventRouter:
                         input_text=_coerce_str(payload.get("inputText")),
                         output_text=_coerce_str(payload.get("outputText")),
                         usage=usage,
-                        cost_usd=payload.get("costUsd") if isinstance(payload.get("costUsd"), (int, float)) else None,
-                        duration_ms=payload.get("durationMs") if isinstance(payload.get("durationMs"), (int, float)) else None,
+                        cost_usd=payload.get("costUsd")
+                        if isinstance(payload.get("costUsd"), (int, float))
+                        else None,
+                        duration_ms=payload.get("durationMs")
+                        if isinstance(payload.get("durationMs"), (int, float))
+                        else None,
                         has_user_visible_reply=True,
-                        cost_details=payload.get("cost") if isinstance(payload.get("cost"), dict) else None,
+                        cost_details=payload.get("cost")
+                        if isinstance(payload.get("cost"), dict)
+                        else None,
                     )
                 return
 
@@ -861,13 +1235,82 @@ class LangfuseEventRouter:
                 subsystem = _coerce_str(payload.get("subsystem")) or "runtime"
                 msg = _coerce_str(payload.get("message"))
                 level = _coerce_str(payload.get("level")) or "info"
-                lf_level = "ERROR" if level in ("fatal", "error") else "WARNING" if level == "warn" else "DEFAULT"
+                lf_level = (
+                    "ERROR"
+                    if level in ("fatal", "error")
+                    else "WARNING"
+                    if level == "warn"
+                    else "DEFAULT"
+                )
                 self.trace_manager.record_event(
                     trace_seed,
                     name=f"log:{subsystem}",
                     level=lf_level,
                     status_message=msg,
-                    metadata={"subsystem": subsystem, "level": level, "meta": payload.get("meta")},
+                    metadata={
+                        "subsystem": subsystem,
+                        "level": level,
+                        "meta": payload.get("meta"),
+                    },
+                )
+                return
+
+            if evt_type == "webhook.error":
+                self.trace_manager.record_event(
+                    trace_seed,
+                    name="webhook_error",
+                    level="ERROR",
+                    status_message=_coerce_str(payload.get("error")) or "webhook_error",
+                    metadata={
+                        "channel": payload.get("channel"),
+                        "updateType": payload.get("updateType"),
+                        "chatId": payload.get("chatId"),
+                    },
+                )
+                return
+
+            if evt_type == "message.processed":
+                outcome = _coerce_str(payload.get("outcome")) or "unknown"
+                if outcome == "error":
+                    lvl = "ERROR"
+                elif outcome == "skipped":
+                    lvl = "WARNING"
+                else:
+                    lvl = "DEFAULT"
+                status = _coerce_str(payload.get("error")) or _coerce_str(
+                    payload.get("reason")
+                )
+                self.trace_manager.record_event(
+                    trace_seed,
+                    name="message_processed",
+                    level=lvl,
+                    status_message=status,
+                    metadata={
+                        "channel": payload.get("channel"),
+                        "messageId": payload.get("messageId"),
+                        "chatId": payload.get("chatId"),
+                        "sessionKey": payload.get("sessionKey"),
+                        "sessionId": payload.get("sessionId"),
+                        "durationMs": payload.get("durationMs"),
+                        "outcome": outcome,
+                        "reason": payload.get("reason"),
+                    },
+                )
+                return
+
+            if evt_type == "session.stuck":
+                self.trace_manager.record_event(
+                    trace_seed,
+                    name="session_stuck",
+                    level="WARNING",
+                    status_message=_coerce_str(payload.get("state")),
+                    metadata={
+                        "sessionKey": payload.get("sessionKey"),
+                        "sessionId": payload.get("sessionId"),
+                        "state": payload.get("state"),
+                        "ageMs": payload.get("ageMs"),
+                        "queueDepth": payload.get("queueDepth"),
+                    },
                 )
                 return
 
@@ -900,7 +1343,10 @@ class LangfuseEventRouter:
             name=kind,
             level="DEFAULT",
             status_message=None,
-            metadata={"context": envelope.get("context"), "payload": envelope.get("payload")},
+            metadata={
+                "context": envelope.get("context"),
+                "payload": envelope.get("payload"),
+            },
         )
 
     def _route_trace_seed(self, envelope: JsonDict) -> str:
@@ -909,8 +1355,12 @@ class LangfuseEventRouter:
         /new or /reset will rotate to a new trace seed.
         """
         kind = _coerce_str(envelope.get("kind")) or "unknown"
-        ctx = envelope.get("context") if isinstance(envelope.get("context"), dict) else {}
-        payload = envelope.get("payload") if isinstance(envelope.get("payload"), dict) else {}
+        ctx = (
+            envelope.get("context") if isinstance(envelope.get("context"), dict) else {}
+        )
+        payload = (
+            envelope.get("payload") if isinstance(envelope.get("payload"), dict) else {}
+        )
         channel = _channel_from_any(envelope)
         now_ms = _now_ms()
 
@@ -921,8 +1371,10 @@ class LangfuseEventRouter:
             msg_text = _message_received_text(payload)
             if conv_key or channel:
                 if _is_reset_command(msg_text):
-                    old_seed = self._conv_active_seed.get(conv_key) if conv_key else None
-                    
+                    old_seed = (
+                        self._conv_active_seed.get(conv_key) if conv_key else None
+                    )
+
                     if old_seed:
                         self.trace_manager.record_event(
                             old_seed,
@@ -938,7 +1390,7 @@ class LangfuseEventRouter:
                         self._conv_active_seed[conv_key] = seed
                     if channel:
                         self._channel_last_seed[channel] = (seed, now_ms)
-                    
+
                     # Re-bind any session/agent keys that pointed to the old seed
                     if old_seed:
                         for k, v in list(self._session_active_seed.items()):
@@ -950,7 +1402,7 @@ class LangfuseEventRouter:
 
                     self._save_state()
                     return seed
-                
+
                 seed = self._conv_active_seed.get(conv_key) if conv_key else None
                 # If we already have a sessionKey binding, prefer it over channel heuristics.
                 if not seed and sess and sess in self._session_active_seed:
@@ -985,7 +1437,9 @@ class LangfuseEventRouter:
         if kind == "hook.before_agent_start":
             agent = _coerce_str(ctx.get("agentId"))
             sess = _coerce_str(ctx.get("sessionKey"))
-            conv_key = _conv_key_from_prompt(payload.get("prompt"), preferred_channel=channel)
+            conv_key = _conv_key_from_prompt(
+                payload.get("prompt"), preferred_channel=channel
+            )
             prompt_text = _prompt_user_text(payload.get("prompt"))
             # Some surfaces issue /reset or /new without emitting hook.message_received.
             # Rotate the trace seed here to ensure new traces are created.
@@ -1028,7 +1482,7 @@ class LangfuseEventRouter:
             seed: Optional[str] = None
             if conv_key:
                 seed = self._conv_active_seed.get(conv_key)
-            
+
             # Prioritize existing bindings for session/agent to avoid incorrect channel fallback
             if not seed and sess and sess in self._session_active_seed:
                 seed = self._session_active_seed[sess]
@@ -1042,7 +1496,7 @@ class LangfuseEventRouter:
                 prev = self._channel_last_seed.get(channel)
                 if prev and now_ms - prev[1] <= self._channel_bind_window_ms:
                     seed = prev[0]
-            
+
             if not seed:
                 # fallback: create new or use (already checked) session binding
                 if sess and sess in self._session_active_seed:
@@ -1061,10 +1515,16 @@ class LangfuseEventRouter:
             return seed
 
         # Tool hooks: resolve from bound sessionKey/agentId.
-        if kind in ("hook.before_tool_call", "hook.tool_result_persist", "hook.after_tool_call"):
+        if kind in (
+            "hook.before_tool_call",
+            "hook.tool_result_persist",
+            "hook.after_tool_call",
+        ):
             agent = _coerce_str(ctx.get("agentId"))
             sess = _coerce_str(ctx.get("sessionKey"))
-            seed = (sess and self._session_active_seed.get(sess)) or (agent and self._agent_active_seed.get(agent))
+            seed = (sess and self._session_active_seed.get(sess)) or (
+                agent and self._agent_active_seed.get(agent)
+            )
             if seed:
                 return seed
             # If a tool hook arrives before we saw hook.before_agent_start,
@@ -1085,7 +1545,9 @@ class LangfuseEventRouter:
         if kind == "hook.agent_end":
             agent = _coerce_str(ctx.get("agentId"))
             sess = _coerce_str(ctx.get("sessionKey"))
-            seed = (sess and self._session_active_seed.get(sess)) or (agent and self._agent_active_seed.get(agent))
+            seed = (sess and self._session_active_seed.get(sess)) or (
+                agent and self._agent_active_seed.get(agent)
+            )
             return seed or _trace_seed_from_envelope(envelope)
 
         # Fallback to old behavior for diagnostics/unknowns.

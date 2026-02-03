@@ -3,7 +3,6 @@ from __future__ import annotations
 import datetime
 import hashlib
 import json
-import os
 import re
 import threading
 import uuid
@@ -42,7 +41,9 @@ def _extract_binding(obj: Any) -> Dict[str, Optional[str]]:
         "sessionId": _coerce_str(obj.get("sessionId") or obj.get("session_id")),
         "sessionKey": _coerce_str(obj.get("sessionKey") or obj.get("session_key")),
         "runId": _coerce_str(obj.get("runId") or obj.get("run_id")),
-        "channel": _coerce_str(obj.get("channel") or obj.get("messageProvider") or obj.get("channelId")),
+        "channel": _coerce_str(
+            obj.get("channel") or obj.get("messageProvider") or obj.get("channelId")
+        ),
     }
 
 
@@ -65,8 +66,12 @@ def _resolve_trace_key(envelope: JsonDict) -> str:
     # Message hooks only have channel + conversationId typically; keep stable-ish grouping.
     kind = _coerce_str(envelope.get("kind")) or "unknown"
     if isinstance(context, dict):
-        channel_id = _coerce_str(context.get("channelId")) or _coerce_str(context.get("channel"))
-        conv_id = _coerce_str(context.get("conversationId")) or _coerce_str(context.get("chatId"))
+        channel_id = _coerce_str(context.get("channelId")) or _coerce_str(
+            context.get("channel")
+        )
+        conv_id = _coerce_str(context.get("conversationId")) or _coerce_str(
+            context.get("chatId")
+        )
         if channel_id and conv_id:
             return f"{channel_id}:{conv_id}"
         if channel_id:
@@ -90,14 +95,18 @@ class TraceDoc:
     gen_seq: int = 0
     seen_generation_keys: set[str] = field(default_factory=set)
     run_start_ts_ms: Optional[int] = None
-    pending_tools: Dict[str, list[Dict[str, Any]]] = field(default_factory=dict)  # key -> FIFO list
+    pending_tools: Dict[str, list[Dict[str, Any]]] = field(
+        default_factory=dict
+    )  # key -> FIFO list
 
 
 def _iso_from_ts_ms(ts_ms: Any) -> Optional[str]:
     if not isinstance(ts_ms, (int, float)):
         return None
     try:
-        return datetime.datetime.fromtimestamp(float(ts_ms) / 1000.0, tz=datetime.timezone.utc).isoformat()
+        return datetime.datetime.fromtimestamp(
+            float(ts_ms) / 1000.0, tz=datetime.timezone.utc
+        ).isoformat()
     except Exception:
         return None
 
@@ -137,7 +146,11 @@ def _iter_assistant_messages(messages: Any) -> list[JsonDict]:
             continue
         if _coerce_str(m.get("role")) != "assistant":
             continue
-        if not (_coerce_str(m.get("model")) or _coerce_str(m.get("provider")) or isinstance(m.get("usage"), dict)):
+        if not (
+            _coerce_str(m.get("model"))
+            or _coerce_str(m.get("provider"))
+            or isinstance(m.get("usage"), dict)
+        ):
             continue
         out.append(m)
     return out
@@ -149,13 +162,17 @@ def _assistant_text(msg: JsonDict) -> Optional[str]:
 
 def _tool_name(envelope: JsonDict) -> Optional[str]:
     ctx = envelope.get("context") if isinstance(envelope.get("context"), dict) else {}
-    payload = envelope.get("payload") if isinstance(envelope.get("payload"), dict) else {}
+    payload = (
+        envelope.get("payload") if isinstance(envelope.get("payload"), dict) else {}
+    )
     return _coerce_str(ctx.get("toolName")) or _coerce_str(payload.get("toolName"))
 
 
 def _session_key(envelope: JsonDict) -> Optional[str]:
     ctx = envelope.get("context") if isinstance(envelope.get("context"), dict) else {}
-    payload = envelope.get("payload") if isinstance(envelope.get("payload"), dict) else {}
+    payload = (
+        envelope.get("payload") if isinstance(envelope.get("payload"), dict) else {}
+    )
     return _coerce_str(ctx.get("sessionKey")) or _coerce_str(payload.get("sessionKey"))
 
 
@@ -165,13 +182,17 @@ def _agent_id(envelope: JsonDict) -> Optional[str]:
 
 
 def _tool_input(envelope: JsonDict) -> Any:
-    payload = envelope.get("payload") if isinstance(envelope.get("payload"), dict) else {}
+    payload = (
+        envelope.get("payload") if isinstance(envelope.get("payload"), dict) else {}
+    )
     params = payload.get("params")
     return params if params is not None else payload
 
 
 def _tool_output(envelope: JsonDict) -> Dict[str, Any]:
-    payload = envelope.get("payload") if isinstance(envelope.get("payload"), dict) else {}
+    payload = (
+        envelope.get("payload") if isinstance(envelope.get("payload"), dict) else {}
+    )
     msg = payload.get("message") if isinstance(payload.get("message"), dict) else {}
     out = _msg_text_parts(msg.get("content"))
     if out is None:
@@ -179,11 +200,18 @@ def _tool_output(envelope: JsonDict) -> Dict[str, Any]:
     tool_call_id = _coerce_str(msg.get("toolCallId"))
     if not tool_call_id and isinstance(envelope.get("context"), dict):
         tool_call_id = _coerce_str(envelope["context"].get("toolCallId"))
-    return {"output": out if out is not None else msg, "isError": msg.get("isError") is True, "toolCallId": tool_call_id}
+    return {
+        "output": out if out is not None else msg,
+        "isError": msg.get("isError") is True,
+        "toolCallId": tool_call_id,
+    }
+
 
 def _tool_call_id(envelope: JsonDict) -> Optional[str]:
     ctx = envelope.get("context") if isinstance(envelope.get("context"), dict) else {}
-    payload = envelope.get("payload") if isinstance(envelope.get("payload"), dict) else {}
+    payload = (
+        envelope.get("payload") if isinstance(envelope.get("payload"), dict) else {}
+    )
     # Prefer context.toolCallId; some builds may also put it in payload.
     return _coerce_str(ctx.get("toolCallId")) or _coerce_str(payload.get("toolCallId"))
 
@@ -191,7 +219,11 @@ def _tool_call_id(envelope: JsonDict) -> Optional[str]:
 def _conv_key_from_message(envelope: JsonDict) -> Optional[str]:
     ctx = envelope.get("context") if isinstance(envelope.get("context"), dict) else {}
     channel = _coerce_str(ctx.get("channelId")) or _coerce_str(ctx.get("channel"))
-    conv = _coerce_str(ctx.get("conversationId")) or _coerce_str(ctx.get("chatId")) or _coerce_str(ctx.get("threadId"))
+    conv = (
+        _coerce_str(ctx.get("conversationId"))
+        or _coerce_str(ctx.get("chatId"))
+        or _coerce_str(ctx.get("threadId"))
+    )
     if not channel or not conv:
         return None
     return f"{channel.lower()}:{conv}"
@@ -212,7 +244,9 @@ _KNOWN_PROMPT_CHANNELS = {
 }
 
 
-def _conv_key_from_prompt(prompt: Any, *, preferred_channel: Optional[str] = None) -> Optional[str]:
+def _conv_key_from_prompt(
+    prompt: Any, *, preferred_channel: Optional[str] = None
+) -> Optional[str]:
     p = _coerce_str(prompt)
     if not p:
         return None
@@ -289,7 +323,13 @@ def _prompt_user_text(prompt: Any) -> Optional[str]:
             return rest or None
     return s
 
-def _compute_gen_key(iso_ts: Optional[str], model: Optional[str], provider: Optional[str], text: Optional[str]) -> str:
+
+def _compute_gen_key(
+    iso_ts: Optional[str],
+    model: Optional[str],
+    provider: Optional[str],
+    text: Optional[str],
+) -> str:
     # Use stable hash for text to allow dedup across restarts
     t = text or ""
     h = hashlib.sha256(t.encode("utf-8")).hexdigest()
@@ -314,7 +354,9 @@ class LogManager:
         self._session_active_trace: Dict[str, str] = {}  # sessionKey -> trace_id
         # Trace cache (trace_id -> doc)
         self._trace_docs: Dict[str, TraceDoc] = {}
-        self._channel_last_trace: Dict[str, Tuple[str, int]] = {}  # channel -> (trace_id, ts_ms)
+        self._channel_last_trace: Dict[
+            str, Tuple[str, int]
+        ] = {}  # channel -> (trace_id, ts_ms)
         self._channel_bind_window_ms: int = 120_000
         self._trace_map_file = (base_dir / "trace_map.json").resolve()
         self._load_trace_map()
@@ -366,7 +408,11 @@ class LogManager:
             if not isinstance(raw, dict):
                 return None
             trace = raw.get("trace") if isinstance(raw.get("trace"), dict) else {}
-            observations = raw.get("observations") if isinstance(raw.get("observations"), list) else []
+            observations = (
+                raw.get("observations")
+                if isinstance(raw.get("observations"), list)
+                else []
+            )
             created_at = trace.get("createdAt")
             updated_at = trace.get("updatedAt")
             created_ms = _now_ms()
@@ -384,7 +430,9 @@ class LogManager:
                 observations=[o for o in observations if isinstance(o, dict)],
             )
             # Best-effort: recover seq to avoid name collisions
-            doc.gen_seq = len([o for o in doc.observations if o.get("type") == "GENERATION"])
+            doc.gen_seq = len(
+                [o for o in doc.observations if o.get("type") == "GENERATION"]
+            )
 
             # Repopulate seen_generation_keys to prevent duplicates on restart
             for o in doc.observations:
@@ -393,10 +441,7 @@ class LogManager:
                         meta = json.loads(o.get("metadata") or "{}")
                         prov = meta.get("provider")
                         key = _compute_gen_key(
-                            o.get("startTime"),
-                            o.get("model"),
-                            prov,
-                            o.get("output")
+                            o.get("startTime"), o.get("model"), prov, o.get("output")
                         )
                         doc.seen_generation_keys.add(key)
                     except Exception:
@@ -429,21 +474,46 @@ class LogManager:
                 "output": None,
                 "createdAt": _iso_from_ts_ms(now),
                 "updatedAt": _iso_from_ts_ms(now),
-                "metadata": json.dumps({"startedAt": _iso_from_ts_ms(now)}, ensure_ascii=False),
+                "metadata": json.dumps(
+                    {"startedAt": _iso_from_ts_ms(now)}, ensure_ascii=False
+                ),
             }
-            doc = TraceDoc(trace_id=trace_id, file_path=fp, created_ts_ms=now, updated_ts_ms=now, trace=trace, observations=[])
+            doc = TraceDoc(
+                trace_id=trace_id,
+                file_path=fp,
+                created_ts_ms=now,
+                updated_ts_ms=now,
+                trace=trace,
+                observations=[],
+            )
             self._trace_docs[trace_id] = doc
             return doc
 
     def _route_trace_id(self, envelope: JsonDict) -> str:
         kind = _coerce_str(envelope.get("kind")) or "unknown"
-        ctx = envelope.get("context") if isinstance(envelope.get("context"), dict) else {}
-        payload = envelope.get("payload") if isinstance(envelope.get("payload"), dict) else {}
+        ctx = (
+            envelope.get("context") if isinstance(envelope.get("context"), dict) else {}
+        )
+        payload = (
+            envelope.get("payload") if isinstance(envelope.get("payload"), dict) else {}
+        )
         now_ms = _now_ms()
-        channel = (_coerce_str(ctx.get("channelId")) or _coerce_str(ctx.get("messageProvider")) or "").strip().lower() or None
+        channel = (
+            _coerce_str(ctx.get("channelId"))
+            or _coerce_str(ctx.get("messageProvider"))
+            or ""
+        ).strip().lower() or None
         if not channel:
-            meta = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
-            channel = (_coerce_str(meta.get("provider")) or _coerce_str(meta.get("surface")) or "").strip().lower() or None
+            meta = (
+                payload.get("metadata")
+                if isinstance(payload.get("metadata"), dict)
+                else {}
+            )
+            channel = (
+                _coerce_str(meta.get("provider"))
+                or _coerce_str(meta.get("surface"))
+                or ""
+            ).strip().lower() or None
         if not channel:
             # queued prompt fallback
             convp = _coerce_str(payload.get("prompt"))
@@ -466,8 +536,10 @@ class LogManager:
             if conv_key or channel:
                 with self._lock:
                     if _is_reset_command(content):
-                        old_tid = self._conv_active_trace.get(conv_key) if conv_key else None
-                        
+                        old_tid = (
+                            self._conv_active_trace.get(conv_key) if conv_key else None
+                        )
+
                         # Close old trace if open
                         if old_tid:
                             try:
@@ -483,16 +555,20 @@ class LogManager:
                                             "parentObservationId": None,
                                             "type": "SPAN",
                                             "name": "session:processing",
-                                            "startTime": _iso_from_ts_ms(old_doc.run_start_ts_ms),
+                                            "startTime": _iso_from_ts_ms(
+                                                old_doc.run_start_ts_ms
+                                            ),
                                             "endTime": iso,
                                             "latency": 0,  # Unknown
                                             "level": "DEFAULT",
                                             "statusMessage": "reset",
-                                            "metadata": json.dumps({"reason": "reset"}, ensure_ascii=False),
+                                            "metadata": json.dumps(
+                                                {"reason": "reset"}, ensure_ascii=False
+                                            ),
                                         },
                                     )
                                     old_doc.run_start_ts_ms = None
-                                
+
                                 # Add idle event
                                 self._add_observation(
                                     old_doc,
@@ -506,7 +582,9 @@ class LogManager:
                                         "endTime": None,
                                         "level": "DEFAULT",
                                         "statusMessage": "reset",
-                                        "metadata": json.dumps({"reason": "reset"}, ensure_ascii=False),
+                                        "metadata": json.dumps(
+                                            {"reason": "reset"}, ensure_ascii=False
+                                        ),
                                     },
                                 )
                                 self._persist(old_doc)
@@ -518,7 +596,7 @@ class LogManager:
                             self._conv_active_trace[conv_key] = tid
                         if channel:
                             self._channel_last_trace[channel] = (tid, now_ms)
-                        
+
                         # Re-bind any session/agent keys that pointed to the old trace
                         # to the new trace, so queued items (agent start) land in new trace.
                         if old_tid:
@@ -528,10 +606,10 @@ class LogManager:
                             for k, v in list(self._agent_active_trace.items()):
                                 if v == old_tid:
                                     self._agent_active_trace[k] = tid
-                        
+
                         self._save_trace_map()
                         return tid
-                    
+
                     tid = self._conv_active_trace.get(conv_key) if conv_key else None
                     # If we already have a sessionKey binding, prefer it over channel heuristics.
                     sess = _session_key(envelope)
@@ -543,7 +621,10 @@ class LogManager:
                         # Bind first real message to most recent channel trace if available.
                         if channel:
                             prev = self._channel_last_trace.get(channel)
-                            if prev and now_ms - prev[1] <= self._channel_bind_window_ms:
+                            if (
+                                prev
+                                and now_ms - prev[1] <= self._channel_bind_window_ms
+                            ):
                                 tid = prev[0]
                                 if conv_key:
                                     self._conv_active_trace[conv_key] = tid
@@ -565,7 +646,9 @@ class LogManager:
         if kind == "hook.before_agent_start":
             agent = _coerce_str(ctx.get("agentId"))
             sess = _coerce_str(ctx.get("sessionKey"))
-            conv_key = _conv_key_from_prompt(payload.get("prompt"), preferred_channel=channel)
+            conv_key = _conv_key_from_prompt(
+                payload.get("prompt"), preferred_channel=channel
+            )
             with self._lock:
                 tid: Optional[str] = None
                 if conv_key:
@@ -598,12 +681,16 @@ class LogManager:
                                         "parentObservationId": None,
                                         "type": "SPAN",
                                         "name": "session:processing",
-                                        "startTime": _iso_from_ts_ms(old_doc.run_start_ts_ms),
+                                        "startTime": _iso_from_ts_ms(
+                                            old_doc.run_start_ts_ms
+                                        ),
                                         "endTime": iso,
                                         "latency": 0,
                                         "level": "DEFAULT",
                                         "statusMessage": "reset",
-                                        "metadata": json.dumps({"reason": "reset"}, ensure_ascii=False),
+                                        "metadata": json.dumps(
+                                            {"reason": "reset"}, ensure_ascii=False
+                                        ),
                                     },
                                 )
                                 old_doc.run_start_ts_ms = None
@@ -619,7 +706,9 @@ class LogManager:
                                     "endTime": None,
                                     "level": "DEFAULT",
                                     "statusMessage": "reset",
-                                    "metadata": json.dumps({"reason": "reset"}, ensure_ascii=False),
+                                    "metadata": json.dumps(
+                                        {"reason": "reset"}, ensure_ascii=False
+                                    ),
                                 },
                             )
                             self._persist(old_doc)
@@ -637,13 +726,13 @@ class LogManager:
                         self._channel_last_trace[channel] = (tid, now_ms)
                     self._save_trace_map()
                     return tid
-                
+
                 # Prioritize existing bindings for session/agent to avoid incorrect channel fallback
                 if not tid and sess and sess in self._session_active_trace:
                     tid = self._session_active_trace[sess]
                 if not tid and agent and agent in self._agent_active_trace:
                     tid = self._agent_active_trace[agent]
-                
+
                 # Avoid fallback if we have a sessionKey or agentId (implies distinct run) to prevent
                 # merging concurrent sessions/runs on the same channel.
                 if not tid and channel and not sess and not agent:
@@ -672,17 +761,25 @@ class LogManager:
             agent = _coerce_str(ctx.get("agentId"))
             sess = _coerce_str(ctx.get("sessionKey"))
             with self._lock:
-                tid = (sess and self._session_active_trace.get(sess)) or (agent and self._agent_active_trace.get(agent))
+                tid = (sess and self._session_active_trace.get(sess)) or (
+                    agent and self._agent_active_trace.get(agent)
+                )
                 if not tid:
                     tid = _new_uuid()
                 return tid
 
         # 4) Tool hooks: route to bound trace if possible.
-        if kind in ("hook.before_tool_call", "hook.tool_result_persist", "hook.after_tool_call"):
+        if kind in (
+            "hook.before_tool_call",
+            "hook.tool_result_persist",
+            "hook.after_tool_call",
+        ):
             agent = _coerce_str(ctx.get("agentId"))
             sess = _coerce_str(ctx.get("sessionKey"))
             with self._lock:
-                tid = (sess and self._session_active_trace.get(sess)) or (agent and self._agent_active_trace.get(agent))
+                tid = (sess and self._session_active_trace.get(sess)) or (
+                    agent and self._agent_active_trace.get(agent)
+                )
                 if tid:
                     return tid
                 # If a tool hook arrives before hook.before_agent_start, provisionally
@@ -702,7 +799,9 @@ class LogManager:
         # 5) Fallback: keep old trace key behavior (but map into a new trace file).
         fallback_key = _resolve_trace_key(envelope)
         with self._lock:
-            existing = self._session_active_trace.get(fallback_key) or self._conv_active_trace.get(fallback_key)
+            existing = self._session_active_trace.get(
+                fallback_key
+            ) or self._conv_active_trace.get(fallback_key)
             if existing:
                 return existing
             tid = _new_uuid()
@@ -727,14 +826,20 @@ class LogManager:
             meta["startedAt"] = _iso_from_ts_ms(doc.started_ts_ms)
         if doc.ended_ts_ms is not None:
             meta["endedAt"] = _iso_from_ts_ms(doc.ended_ts_ms)
-        if doc.started_ts_ms is not None and doc.ended_ts_ms is not None and doc.ended_ts_ms >= doc.started_ts_ms:
+        if (
+            doc.started_ts_ms is not None
+            and doc.ended_ts_ms is not None
+            and doc.ended_ts_ms >= doc.started_ts_ms
+        ):
             meta["durationMs"] = int(doc.ended_ts_ms - doc.started_ts_ms)
         doc.trace["metadata"] = json.dumps(meta, ensure_ascii=False, default=str)
 
         payload = {"trace": doc.trace, "observations": doc.observations}
         try:
             doc.file_path.parent.mkdir(parents=True, exist_ok=True)
-            doc.file_path.write_text(_safe_json_dumps(payload, pretty=True), encoding="utf-8")
+            doc.file_path.write_text(
+                _safe_json_dumps(payload, pretty=True), encoding="utf-8"
+            )
         except Exception:
             pass
 
@@ -755,15 +860,27 @@ class LogManager:
 
         # Adjacent duplicate suppression (keeps file stable on tail replays).
         try:
-            sig = _safe_json_dumps({"kind": kind, "ts": ts_ms, "context": envelope.get("context"), "payload": envelope.get("payload")}, pretty=False)
+            sig = _safe_json_dumps(
+                {
+                    "kind": kind,
+                    "ts": ts_ms,
+                    "context": envelope.get("context"),
+                    "payload": envelope.get("payload"),
+                },
+                pretty=False,
+            )
             if doc.last_event_sig == sig:
                 return
             doc.last_event_sig = sig
         except Exception:
             pass
 
-        ctx = envelope.get("context") if isinstance(envelope.get("context"), dict) else {}
-        payload = envelope.get("payload") if isinstance(envelope.get("payload"), dict) else {}
+        ctx = (
+            envelope.get("context") if isinstance(envelope.get("context"), dict) else {}
+        )
+        payload = (
+            envelope.get("payload") if isinstance(envelope.get("payload"), dict) else {}
+        )
 
         def md(d: Dict[str, Any]) -> str:
             return json.dumps(d, ensure_ascii=False, default=str)
@@ -782,7 +899,13 @@ class LogManager:
                     "endTime": None,
                     "level": "DEFAULT",
                     "statusMessage": _coerce_str(text),
-                    "metadata": md({"context": ctx, "payloadMeta": payload.get("metadata"), "isReset": _is_reset_command(text)}),
+                    "metadata": md(
+                        {
+                            "context": ctx,
+                            "payloadMeta": payload.get("metadata"),
+                            "isReset": _is_reset_command(text),
+                        }
+                    ),
                 },
             )
             return
@@ -803,7 +926,12 @@ class LogManager:
                     "endTime": None,
                     "level": "DEFAULT",
                     "statusMessage": None,
-                    "metadata": md({"agentId": _coerce_str(ctx.get("agentId")), "sessionKey": _coerce_str(ctx.get("sessionKey"))}),
+                    "metadata": md(
+                        {
+                            "agentId": _coerce_str(ctx.get("agentId")),
+                            "sessionKey": _coerce_str(ctx.get("sessionKey")),
+                        }
+                    ),
                 },
             )
 
@@ -811,7 +939,9 @@ class LogManager:
             for msg in _iter_assistant_messages(payload.get("messages")):
                 out_text = _assistant_text(msg)
                 model = _coerce_str(msg.get("model"))
-                provider = _coerce_str(msg.get("provider")) or _coerce_str(msg.get("api"))
+                provider = _coerce_str(msg.get("provider")) or _coerce_str(
+                    msg.get("api")
+                )
                 usage = msg.get("usage") if isinstance(msg.get("usage"), dict) else {}
                 cost = usage.get("cost") if isinstance(usage.get("cost"), dict) else {}
                 msg_ts = msg.get("timestamp")
@@ -835,8 +965,18 @@ class LogManager:
                         "endTime": msg_iso,
                         "level": "DEFAULT",
                         "model": model,
-                        "usageDetails": {"input": usage.get("input"), "output": usage.get("output"), "total": usage.get("total") or usage.get("totalTokens")},
-                        "costDetails": {"input": cost.get("input"), "output": cost.get("output"), "total": cost.get("total")} if isinstance(cost, dict) else {},
+                        "usageDetails": {
+                            "input": usage.get("input"),
+                            "output": usage.get("output"),
+                            "total": usage.get("total") or usage.get("totalTokens"),
+                        },
+                        "costDetails": {
+                            "input": cost.get("input"),
+                            "output": cost.get("output"),
+                            "total": cost.get("total"),
+                        }
+                        if isinstance(cost, dict)
+                        else {},
                         "metadata": md({"provider": provider}),
                         "input": None,
                         "output": out_text,
@@ -848,7 +988,11 @@ class LogManager:
             if ts_int is not None:
                 doc.ended_ts_ms = ts_int
             # Close the run span (session:processing) as a SPAN.
-            if doc.run_start_ts_ms is not None and ts_int is not None and ts_int >= doc.run_start_ts_ms:
+            if (
+                doc.run_start_ts_ms is not None
+                and ts_int is not None
+                and ts_int >= doc.run_start_ts_ms
+            ):
                 self._add_observation(
                     doc,
                     {
@@ -862,7 +1006,12 @@ class LogManager:
                         "latency": (ts_int - doc.run_start_ts_ms) / 1000.0,
                         "level": "DEFAULT",
                         "statusMessage": None,
-                        "metadata": md({"agentId": _coerce_str(ctx.get("agentId")), "sessionKey": _coerce_str(ctx.get("sessionKey"))}),
+                        "metadata": md(
+                            {
+                                "agentId": _coerce_str(ctx.get("agentId")),
+                                "sessionKey": _coerce_str(ctx.get("sessionKey")),
+                            }
+                        ),
                     },
                 )
             doc.run_start_ts_ms = None
@@ -878,7 +1027,12 @@ class LogManager:
                     "endTime": None,
                     "level": "DEFAULT",
                     "statusMessage": None,
-                    "metadata": md({"agentId": _coerce_str(ctx.get("agentId")), "sessionKey": _coerce_str(ctx.get("sessionKey"))}),
+                    "metadata": md(
+                        {
+                            "agentId": _coerce_str(ctx.get("agentId")),
+                            "sessionKey": _coerce_str(ctx.get("sessionKey")),
+                        }
+                    ),
                 },
             )
 
@@ -886,7 +1040,9 @@ class LogManager:
             for msg in _iter_assistant_messages(payload.get("messages")):
                 out_text = _assistant_text(msg)
                 model = _coerce_str(msg.get("model"))
-                provider = _coerce_str(msg.get("provider")) or _coerce_str(msg.get("api"))
+                provider = _coerce_str(msg.get("provider")) or _coerce_str(
+                    msg.get("api")
+                )
                 usage = msg.get("usage") if isinstance(msg.get("usage"), dict) else {}
                 cost = usage.get("cost") if isinstance(usage.get("cost"), dict) else {}
                 msg_ts = msg.get("timestamp")
@@ -910,8 +1066,18 @@ class LogManager:
                         "endTime": msg_iso,
                         "level": "DEFAULT",
                         "model": model,
-                        "usageDetails": {"input": usage.get("input"), "output": usage.get("output"), "total": usage.get("total") or usage.get("totalTokens")},
-                        "costDetails": {"input": cost.get("input"), "output": cost.get("output"), "total": cost.get("total")} if isinstance(cost, dict) else {},
+                        "usageDetails": {
+                            "input": usage.get("input"),
+                            "output": usage.get("output"),
+                            "total": usage.get("total") or usage.get("totalTokens"),
+                        },
+                        "costDetails": {
+                            "input": cost.get("input"),
+                            "output": cost.get("output"),
+                            "total": cost.get("total"),
+                        }
+                        if isinstance(cost, dict)
+                        else {},
                         "metadata": md({"provider": provider}),
                         "input": None,
                         "output": out_text,
@@ -926,7 +1092,9 @@ class LogManager:
             tcid = _tool_call_id(envelope)
             key = f"id:{tcid}" if tcid else f"k:{sess}:{agent}:{tool}"
             q = doc.pending_tools.setdefault(key, [])
-            q.append({"startTs": ts_int, "input": _tool_input(envelope), "toolCallId": tcid})
+            q.append(
+                {"startTs": ts_int, "input": _tool_input(envelope), "toolCallId": tcid}
+            )
             return
 
         if kind == "hook.tool_result_persist":
@@ -939,8 +1107,16 @@ class LogManager:
             start = q.pop(0) if q else None
             out = _tool_output(envelope)
             start_ts = start.get("startTs") if isinstance(start, dict) else None
-            start_iso = _iso_from_ts_ms(start_ts) if isinstance(start_ts, (int, float)) else None
-            latency = (ts_int - int(start_ts)) / 1000.0 if ts_int is not None and isinstance(start_ts, (int, float)) else None
+            start_iso = (
+                _iso_from_ts_ms(start_ts)
+                if isinstance(start_ts, (int, float))
+                else None
+            )
+            latency = (
+                (ts_int - int(start_ts)) / 1000.0
+                if ts_int is not None and isinstance(start_ts, (int, float))
+                else None
+            )
             self._add_observation(
                 doc,
                 {
@@ -954,7 +1130,13 @@ class LogManager:
                     "latency": latency,
                     "level": "ERROR" if out.get("isError") else "DEFAULT",
                     "statusMessage": "tool_error" if out.get("isError") else None,
-                    "metadata": md({"toolCallId": out.get("toolCallId"), "sessionKey": sess, "agentId": agent}),
+                    "metadata": md(
+                        {
+                            "toolCallId": out.get("toolCallId"),
+                            "sessionKey": sess,
+                            "agentId": agent,
+                        }
+                    ),
                     "input": start.get("input") if isinstance(start, dict) else None,
                     "output": out.get("output"),
                 },
@@ -974,8 +1156,11 @@ class LogManager:
                 "endTime": None,
                 "level": "DEFAULT",
                 "statusMessage": None,
-                "metadata": json.dumps({"context": ctx, "payload": payload}, ensure_ascii=False, default=str),
+                "metadata": json.dumps(
+                    {"context": ctx, "payload": payload},
+                    ensure_ascii=False,
+                    default=str,
+                ),
             },
         )
         return
-

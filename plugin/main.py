@@ -49,7 +49,9 @@ def main(argv: Optional[list[str]] = None) -> int:
         public_key=settings.langfuse.public_key,
         secret_key=settings.langfuse.secret_key,
         base_url=settings.langfuse.base_url,
-        persistence_path=(settings.openclaw_config_dir / "langfuse_state.json").resolve(),
+        persistence_path=(
+            settings.openclaw_config_dir / "langfuse_state.json"
+        ).resolve(),
     )
     if not langfuse_router.enabled:
         pk_set = bool(settings.langfuse.public_key)
@@ -60,7 +62,10 @@ def main(argv: Optional[list[str]] = None) -> int:
             file=sys.stderr,
         )
     else:
-        print(f"[o-observability] Langfuse enabled (base_url={settings.langfuse.base_url})", file=sys.stderr)
+        print(
+            f"[o-observability] Langfuse enabled (base_url={settings.langfuse.base_url})",
+            file=sys.stderr,
+        )
 
     stop = _StopFlag()
 
@@ -74,7 +79,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     flush_interval_s = 1.0
     last_langfuse_error = 0.0
 
-    for envelope in tail_jsonl(ipc_file, start_at_end=False, state_file=ipc_file.with_suffix(".tailstate.json")):
+    for envelope in tail_jsonl(
+        ipc_file, start_at_end=False, state_file=ipc_file.with_suffix(".tailstate.json")
+    ):
         if stop.value:
             break
         if not isinstance(envelope, dict):
@@ -112,4 +119,3 @@ def main(argv: Optional[list[str]] = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
