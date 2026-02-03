@@ -69,5 +69,16 @@ IDENTITY.md
 USER.md
 .tgz
 
+# Python
+**/__pycache__/
+**/*.pyc
+
+# Python (uv)
+.venv/
+uv.lock
+.python-version
+.ruff_cache/
+.pytest_cache/
+
 # local tooling
 .serena/

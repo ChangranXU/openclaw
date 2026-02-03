@@ -1,0 +1,9 @@
+{
+  "id": "o-observability",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}
+

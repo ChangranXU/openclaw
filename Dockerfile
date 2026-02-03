@@ -16,6 +16,12 @@ RUN if [ -n "$OPENCLAW_DOCKER_APT_PACKAGES" ]; then \
       rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*; \
     fi
 
+# Install python dependencies for o-observability plugin
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y python3 python3-pip python3-venv && \
+    rm -rf /var/lib/apt/lists/* && \
+    pip3 install langfuse --break-system-packages
+
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY ui/package.json ./ui/package.json
 COPY patches ./patches
@@ -24,6 +30,9 @@ COPY scripts ./scripts
 RUN pnpm install --frozen-lockfile
 
 COPY . .
+# Provide a stable plugin path whose basename matches the manifest id.
+# This avoids `plugin id mismatch` warnings when loading via plugins.load.paths.
+RUN ln -sfn /app/plugin /app/o-observability
 RUN OPENCLAW_A2UI_SKIP_MISSING=1 pnpm build
 # Force pnpm for UI build (Bun may fail on ARM/Synology architectures)
 ENV OPENCLAW_PREFER_PNPM=1
