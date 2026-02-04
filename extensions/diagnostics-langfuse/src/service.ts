@@ -4,8 +4,8 @@ import { onDiagnosticEvent } from "openclaw/plugin-sdk";
 import { TraceManager, ObservabilityRegistry } from "./trace-manager.js";
 
 const DEFAULT_BASE_URL = "https://cloud.langfuse.com";
-const DEFAULT_FLUSH_AT = 15;
-const DEFAULT_FLUSH_INTERVAL_MS = 10000;
+const DEFAULT_FLUSH_AT = 1;
+const DEFAULT_FLUSH_INTERVAL_MS = 1000;
 
 // Module-level state for hook access
 let _traceManager: TraceManager | null = null;
